@@ -46,7 +46,7 @@ graph TD
     classDef logic fill:#e3f2fd,stroke:#42a5f5,stroke-width:2px,color:#333
     classDef agent fill:#fff3e0,stroke:#ffb74d,stroke-width:2px,color:#333
 
-    Main[main.py Orchestrator]:::logic --> CSV[(regions.csv)]:::logic
+    Main[outreach/main.py Orchestrator]:::logic --> CSV[(regions.csv)]:::logic
     CSV --> City1["Process: Austin, TX"]:::logic
     CSV --> City2["Process: Dallas, TX"]:::logic
     CSV --> City3["Process: Phoenix, AZ"]:::logic

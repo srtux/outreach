@@ -1,6 +1,6 @@
 # 03: Code Walkthrough
 
-This guide walks you through `src/main.py`, focusing on the core logic: the ADK `Runner` streaming events, the data parser extracting structured JSON, and the retry loops.
+This guide walks you through `outreach/main.py`, focusing on the core logic: the ADK `Runner` streaming events, the data parser extracting structured JSON, and the retry loops.
 
 ## The Overall Flow
 
@@ -51,7 +51,7 @@ When the agent finally figures out the answer and writes its JSON object, it sen
 
 ## Structured Output via `output_schema`
 
-Because we define an `output_schema` (the `SchoolSearchResult` Pydantic model) when building our agent in `src/main.py`, the Google ADK ensures that the LLM's final response is **pure valid JSON**. 
+Because we define an `output_schema` (the `SchoolSearchResult` Pydantic model) when building our agent in `outreach/main.py`, the Google ADK ensures that the LLM's final response is **pure valid JSON**. 
 
 Unlike older LLM patterns where you might get conversational "noise" (like "Here is your JSON:"), the Gemini model uses constrained decoding to strictly output only the fields defined in our model. 
 

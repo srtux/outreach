@@ -5,7 +5,7 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 from pathlib import Path
 
-from src.main import (
+from outreach.main import (
     parse_agent_response,
     contact_to_row,
     read_regions,
@@ -20,7 +20,7 @@ from src.main import (
     MAX_RETRIES,
     RETRY_BASE_DELAY,
 )
-from src.models import SchoolContact, SchoolSearchResult
+from outreach.models import SchoolContact, SchoolSearchResult
 from google.adk.agents import LlmAgent
 
 # Existing tests for parse_agent_response
@@ -128,9 +128,9 @@ async def test_search_city_success():
     session_service = MagicMock()
     contact = SchoolContact(school_name="S1", faculty_name="F1")
     
-    with patch("src.main._run_agent_once", new_callable=AsyncMock) as mock_run:
+    with patch("outreach.main._run_agent_once", new_callable=AsyncMock) as mock_run:
         mock_run.return_value = [contact]
-        result = await search_city(runner, "Austin", "TX", session_service)
+        result = await search_city(runner, "Austin", "TX", session_service, MagicMock(), MagicMock())
         assert len(result) == 1
         assert result[0] == contact
         mock_run.assert_awaited_once()
@@ -141,12 +141,12 @@ async def test_search_city_timeout_retry():
     session_service = MagicMock()
     contact = SchoolContact(school_name="S1", faculty_name="F1")
     
-    with patch("src.main._run_agent_once", new_callable=AsyncMock) as mock_run, \
+    with patch("outreach.main._run_agent_once", new_callable=AsyncMock) as mock_run, \
          patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
         # First call timeouts, second succeeds
         mock_run.side_effect = [asyncio.TimeoutError, [contact]]
         
-        result = await search_city(runner, "Austin", "TX", session_service)
+        result = await search_city(runner, "Austin", "TX", session_service, MagicMock(), MagicMock())
         assert len(result) == 1
         assert mock_run.call_count == 2
         mock_sleep.assert_awaited_once()
@@ -157,12 +157,12 @@ async def test_search_city_rate_limit_retry():
     session_service = MagicMock()
     contact = SchoolContact(school_name="S1", faculty_name="F1")
     
-    with patch("src.main._run_agent_once", new_callable=AsyncMock) as mock_run, \
+    with patch("outreach.main._run_agent_once", new_callable=AsyncMock) as mock_run, \
          patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
         # First call 429, second succeeds
         mock_run.side_effect = [Exception("429 Too Many Requests"), [contact]]
         
-        result = await search_city(runner, "Austin", "TX", session_service)
+        result = await search_city(runner, "Austin", "TX", session_service, MagicMock(), MagicMock())
         assert len(result) == 1
         assert mock_run.call_count == 2
         mock_sleep.assert_awaited_once()
@@ -172,13 +172,13 @@ async def test_search_city_max_retries_fail():
     runner = MagicMock()
     session_service = MagicMock()
     
-    with patch("src.main._run_agent_once", new_callable=AsyncMock) as mock_run, \
+    with patch("outreach.main._run_agent_once", new_callable=AsyncMock) as mock_run, \
          patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
         # All calls fail with 429
         mock_run.side_effect = Exception("429 Too Many Requests")
         
         with pytest.raises(Exception, match="429 Too Many Requests"):
-            await search_city(runner, "Austin", "TX", session_service)
+            await search_city(runner, "Austin", "TX", session_service, MagicMock(), MagicMock())
         
         assert mock_run.call_count == MAX_RETRIES
         assert mock_sleep.call_count == MAX_RETRIES - 1
@@ -188,12 +188,12 @@ async def test_search_city_timeout_all_fail():
     runner = MagicMock()
     session_service = MagicMock()
     
-    with patch("src.main._run_agent_once", new_callable=AsyncMock) as mock_run, \
+    with patch("outreach.main._run_agent_once", new_callable=AsyncMock) as mock_run, \
          patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
         # All calls timeout
         mock_run.side_effect = asyncio.TimeoutError
         
-        result = await search_city(runner, "Austin", "TX", session_service)
+        result = await search_city(runner, "Austin", "TX", session_service, MagicMock(), MagicMock())
         assert result == []
         assert mock_run.call_count == MAX_RETRIES
         assert mock_sleep.call_count == MAX_RETRIES - 1
@@ -203,11 +203,11 @@ async def test_search_city_other_error():
     runner = MagicMock()
     session_service = MagicMock()
     
-    with patch("src.main._run_agent_once", new_callable=AsyncMock) as mock_run:
+    with patch("outreach.main._run_agent_once", new_callable=AsyncMock) as mock_run:
         mock_run.side_effect = Exception("Unexpected error")
         
         with pytest.raises(Exception, match="Unexpected error"):
-            await search_city(runner, "Austin", "TX", session_service)
+            await search_city(runner, "Austin", "TX", session_service, MagicMock(), MagicMock())
         
         assert mock_run.call_count == 1
 
@@ -222,9 +222,7 @@ async def test_process_city():
     
     contact = SchoolContact(school_name="S1", faculty_name="F1")
     
-    with patch("src.main.search_city", new_callable=AsyncMock) as mock_search, \
-         patch("src.main.append_output_csv") as mock_append:
-        
+    with patch("outreach.main.search_city", new_callable=AsyncMock) as mock_search:
         mock_search.return_value = [contact]
         
         await _process_city(
@@ -233,7 +231,6 @@ async def test_process_city():
         )
         
         assert mock_search.call_count == 2
-        assert mock_append.call_count == 2
         assert progress["done"] == 1
 
 @pytest.mark.asyncio
@@ -245,9 +242,7 @@ async def test_process_city_exception():
     lock = asyncio.Lock()
     progress = {"done": 0, "total": 1}
     
-    with patch("src.main.search_city", new_callable=AsyncMock) as mock_search, \
-         patch("src.main.append_output_csv") as mock_append:
-        
+    with patch("outreach.main.search_city", new_callable=AsyncMock) as mock_search:
         # Simulating exceptions in gather
         mock_search.side_effect = Exception("mock error")
         
@@ -256,8 +251,6 @@ async def test_process_city_exception():
             sem, lock, progress, {}, {}
         )
         
-        # Ensure append output was still called, even if rows are empty 
-        assert mock_append.call_count == 2
         assert progress["done"] == 1
 
 class FakeEvent:
@@ -301,7 +294,7 @@ async def test_run_agent_once():
     runner.run_async = mock_run_async
     
     existing_counts = {"Old School": 2}
-    contacts = await _run_agent_once(runner, "Austin", "TX", session_service, existing_counts)
+    contacts = await _run_agent_once(runner, "Austin", "TX", session_service, MagicMock(), AsyncMock(), existing_counts)
     
     assert len(contacts) == 1
     assert contacts[0].school_name == "Test School"
@@ -319,10 +312,10 @@ async def test_run_agent_once_no_contacts():
         
     runner.run_async = mock_run_async
     
-    contacts = await _run_agent_once(runner, "Austin", "TX", session_service)
+    contacts = await _run_agent_once(runner, "Austin", "TX", session_service, MagicMock(), AsyncMock())
     assert len(contacts) == 0
 
-from src.main import main
+from outreach.main import main
 
 @pytest.mark.asyncio
 async def test_main_no_api_key():
@@ -341,10 +334,10 @@ async def test_main_no_csv():
 async def test_main_success():
     with patch("pathlib.Path.exists", return_value=True), \
          patch("os.environ.get", return_value="fake_key"), \
-         patch("src.main.read_regions", return_value=[{"City": "Aus", "State": "TX"}, {"City": "", "State": ""}]), \
-         patch("src.main.build_agent") as mock_build, \
-         patch("src.main._read_completed_cities", return_value={}), \
-         patch("src.main._process_city", new_callable=AsyncMock) as mock_process:
+         patch("outreach.main.read_regions", return_value=[{"City": "Aus", "State": "TX"}, {"City": "", "State": ""}]), \
+         patch("outreach.main.build_agent") as mock_build, \
+         patch("outreach.main._read_completed_cities", return_value={}), \
+         patch("outreach.main._process_city", new_callable=AsyncMock) as mock_process:
         
         await main()
         assert mock_build.call_count == 2
@@ -354,15 +347,15 @@ async def test_main_success():
 async def test_main_skip_fully_completed():
     with patch("pathlib.Path.exists", return_value=True), \
          patch("os.environ.get", return_value="fake_key"), \
-         patch("src.main.read_regions", return_value=[{"City": "Aus", "State": "TX"}]), \
-         patch("src.main.build_agent"), \
-         patch("src.main._process_city", new_callable=AsyncMock) as mock_process, \
-         patch("src.main._read_completed_cities", side_effect=[
-            {"Aus|TX": {"Sch1": 20, "Sch2": 20}}, # students (len >= targets)
-            {"Aus|TX": {"Sch3": 20, "Sch4": 20}}, # volunteers
+         patch("outreach.main.read_regions", return_value=[{"City": "Aus", "State": "TX"}]), \
+         patch("outreach.main.build_agent"), \
+         patch("outreach.main._process_city", new_callable=AsyncMock) as mock_process, \
+         patch("outreach.main._read_completed_cities", side_effect=[
+            {"Aus|TX": {"Sch1": 10, "Sch2": 10}}, # students (2 schools, 20 contacts)
+            {"Aus|TX": {"Sch3": 10, "Sch4": 10}}, # volunteers
          ]), \
-         patch("src.main.STUDENTS_TARGET", 2), \
-         patch("src.main.VOLUNTEERS_TARGET", 2):
+         patch("outreach.main.MIN_SCHOOLS_TARGET", 2), \
+         patch("outreach.main.MIN_CONTACTS_TARGET", 20):
         
         await main()
         # Should be skipped because targets are met

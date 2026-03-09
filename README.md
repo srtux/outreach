@@ -59,8 +59,19 @@ graph TD
 - **Massive Concurrency**: Processes multiple data streams asynchronously via `asyncio.gather`. The orchestrator runs the Students and Volunteers agents simultaneously on a per-region basis.
 - **Sub-Agent Pattern**: Bypasses typical LLM API constraints by wrapping the built-in Gemini Search capability inside a dedicated `GoogleSearchAgentTool` sub-agent, permitting it to coexist seamlessly with custom Python function calling.
 - **Strict Data Contracts**: Relies on `json-repair` and Pydantic `BaseModel` schemas for flawless, strongly-typed JSON outputs.
-- **Progressive Database Building**: Automatically reads existing CSV outputs to deduplicate schools across multiple runs. It intelligently skips already researched schools and retries schools with missing contacts to build a complete database over time.
-- **Resilient Execution**: Employs exponential backoff out-of-the-box to gracefully handle API rate limits (`429`) or quota ceilings.
+- **Progress Monitoring**: New compact logging UI that tracks per-city progress directly in the terminal (`🎓 Stud. | Seattle, WA | 0/20`), with intelligent truncation of long URLs and search queries.
+- **Resilient Execution**: Employs exponential backoff out-of-the-box to gracefully handle API rate limits (`429`) or quota ceilings. Its non-blocking semaphore ensures the entire pipeline doesn't stall during individual rate-limit waits.
+- **Deduplication & Resumption**: Automatically reads existing CSV outputs to deduplicate schools across multiple runs. It intelligently skips already researched schools and retries schools with missing contacts.
+
+---
+
+## 🔄 Resuming Work
+
+The agent is designed for reliably building a large database over multiple sessions. If you terminate the script mid-run:
+
+1. **State Persistence**: All found contacts are appended to `data/students.csv` and `data/volunteers.csv` immediately upon discovery.
+2. **Automatic Resumption**: On restart, the agent scans these files to determine exactly which schools in which cities still need research.
+3. **Smart Skip**: It will skip cities that have already reached their research targets and will focus on finding *new* schools in partially completed regions.
 
 ---
 
@@ -83,7 +94,7 @@ outreach/
 │   ├── regions.csv                        # Target list: City,State
 │   ├── students.csv                       # Auto-generated leads
 │   └── volunteers.csv                     # Auto-generated leads
-├── src/                                   # Domain Logic
+├── outreach/                              # Domain Logic (Source Package)
 │   ├── main.py                            # Entrypoint, Agent Definition, Orchestration
 │   └── models.py                          # Pydantic JSON schemas
 ├── scripts/                               # Interactive debug & helper utilities
@@ -132,10 +143,11 @@ Columbus,OH
 
 ### 4. Run the Agents!
 
+Execute the tool using `uv` to ensure dependencies are managed:
 ```bash
-uv run src/main.py
+uv run outreach
 ```
-*(Dependencies will be installed into a virtual environment automatically, and the research orchestration will begin).*
+*(This command will automatically create a virtual environment, install dependencies from `pyproject.toml`, and start the research orchestration).*
 
 ---
 
@@ -150,15 +162,21 @@ uv run pytest
 
 ---
 
-## ⚙️ advanced Configuration
+## ⚙️ Advanced Configuration
 
-Behavior parameters can be tuned directly in `src/main.py`.
+Behavior parameters can be tuned directly via `.env` files or system environment variables:
 
 | Parameter | Default | Purpose |
 |----------|---------|-------------|
 | `MODEL_ID` | `gemini-3-flash-preview` | The primary reasoning engine for analysis |
+| `MAX_CONCURRENT_CITIES` | `15` | The number of cities executed simultaneously. Controls rate limiting. |
 | `STUDENTS_TARGET` | `20` | The required yield for elementary/middle schools |
 | `VOLUNTEERS_TARGET` | `20` | The required yield for high school contacts |
+
+Hardcoded resilience parameters inside `outreach/main.py`:
+
+| Parameter | Default | Purpose |
+|----------|---------|-------------|
 | `MAX_RETRIES` | `5` | API resilience retry bounds |
 | `RETRY_BASE_DELAY` | `15.0` | Initial exponential backoff in seconds |
 

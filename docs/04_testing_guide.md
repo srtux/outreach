@@ -25,7 +25,7 @@ async def test_search_city_rate_limit_retry():
     contact = SchoolContact(school_name="S1", faculty_name="F1")
     
     # 2. "Patching" hijacks the actual imports during the test run
-    with patch("src.main._run_agent_once", new_callable=AsyncMock) as mock_run, \
+    with patch("outreach.main._run_agent_once", new_callable=AsyncMock) as mock_run, \
          patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
         
         # 3. We forcibly order the mock to crash with a 429 on the first try, 
@@ -49,13 +49,13 @@ When writing tests, the goal is "Test Coverage"—the percentage of lines of cod
 
 You can execute tests with coverage enabled by running:
 ```bash
-uv run pytest tests/ -v --cov=src --cov-report=term-missing
+uv run pytest tests/ -v --cov=outreach --cov-report=term-missing
 ```
 
 - `uv run` injects the locked dependencies
 - `tests/` points to the test directory
 - `-v` gives verbose individual test readouts
-- `--cov=src` limits coverage tracking to just the actual `src` application files
+- `--cov=outreach` limits coverage tracking to just the actual `outreach` application files
 - `--cov-report=term-missing` outputs a report at the end showing exactly the line numbers of code that you did *not* write a test for.
 
 If you modify this project, simply write new tests, run the coverage command above, and ensure the metrics stay green!

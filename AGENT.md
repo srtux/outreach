@@ -8,7 +8,7 @@ The School Outreach Research Agent is an autonomous web research system that fin
 
 ### Core Components
 
-#### 1. Orchestrator (`src/main.py` — `main()`)
+#### 1. Orchestrator (`outreach/main.py` — `main()`)
 
 The orchestrator is the entry point. It:
 
@@ -82,7 +82,7 @@ regions.csv → read_regions() → main() loop
   → append_output_csv() → students.csv / volunteers.csv
 ```
 
-### Data Models (`src/models.py`)
+### Data Models (`outreach/models.py`)
 
 ```python
 SchoolContact:
@@ -96,7 +96,7 @@ SchoolContact:
 
 ### Configuration
 
-All tunable parameters live in `src/main.py`:
+All tunable parameters live in `outreach/main.py`:
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
@@ -109,5 +109,5 @@ All tunable parameters live in `src/main.py`:
 ### Concurrency Model
 
 - **Per-city**: Students and Volunteers agents run in parallel via `asyncio.gather()`
-- **Across cities**: Cities are processed **sequentially** (one at a time)
+- **Across cities**: Multiple cities are processed **concurrently** (up to `MAX_CONCURRENT_CITIES`)
 - **Sessions**: Each agent run creates a fresh `InMemorySession`

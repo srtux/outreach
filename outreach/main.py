@@ -22,12 +22,8 @@ from google.adk.tools.google_search_agent_tool import create_google_search_agent
 from google.adk.tools.load_web_page import load_web_page
 from google.genai import types
 
-# Add project root to sys.path to allow 'src' package imports when running as a script
-if __name__ == "__main__" and not __package__:
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-from src.models import SchoolContact, SchoolSearchResult
-from src.prompts import STUDENTS_SYSTEM_PROMPT, VOLUNTEERS_SYSTEM_PROMPT
+from outreach.models import SchoolContact, SchoolSearchResult
+from outreach.prompts import STUDENTS_SYSTEM_PROMPT, VOLUNTEERS_SYSTEM_PROMPT
 
 # ---------------------------------------------------------------------------
 # GLOBAL CONFIGURATION
@@ -38,10 +34,14 @@ REGIONS_CSV = DATA_DIR / "regions.csv"
 OUTPUT_STUDENTS = DATA_DIR / "students.csv"
 OUTPUT_VOLUNTEERS = DATA_DIR / "volunteers.csv"
 
-MODEL_ID = "gemini-3-flash-preview"
+MODEL_ID = os.environ.get("MODEL_ID", "gemini-3-flash-preview")
 
-STUDENTS_TARGET = 20  # elementary/middle school contacts per city
-VOLUNTEERS_TARGET = 20  # high school CS contacts per city
+MIN_SCHOOLS_TARGET = int(os.environ.get("MIN_SCHOOLS_TARGET", "3"))  # minimum unique schools per city
+MIN_CONTACTS_TARGET = int(os.environ.get("MIN_CONTACTS_TARGET", "20"))  # minimum total contacts per city
+
+# Backwards compatibility / fallbacks (used for prompting the agent)
+STUDENTS_TARGET = int(os.environ.get("STUDENTS_TARGET", str(MIN_CONTACTS_TARGET)))  # elementary/middle school contacts per city
+VOLUNTEERS_TARGET = int(os.environ.get("VOLUNTEERS_TARGET", str(MIN_CONTACTS_TARGET)))  # high school CS contacts per city
 
 
 # Retry settings for 429 rate-limit errors
@@ -49,7 +49,7 @@ MAX_RETRIES = 5
 RETRY_BASE_DELAY = 15.0  # seconds; doubles each retry
 
 # Concurrency settings
-MAX_CONCURRENT_CITIES = 3  # number of cities to research in parallel
+MAX_CONCURRENT_CITIES = int(os.environ.get("MAX_CONCURRENT_CITIES", "15"))  # number of cities to research in parallel
 AGENT_TIMEOUT = 300  # seconds; max time for a single agent run
 
 # Output CSV columns
@@ -106,13 +106,14 @@ def build_agent(agent_type: str) -> LlmAgent:
 def parse_agent_response(text: str) -> list[SchoolContact]:
     """Robustly extract and parse contact information from the agent's response using json-repair."""
     import json_repair
+    from pydantic import ValidationError
     
     try:
         data = json_repair.loads(text)
         # 1. Try bulk validation first (fastest)
         try:
             return SchoolSearchResult.model_validate(data).contacts
-        except Exception:
+        except ValidationError:
             # 2. Fallback: Parse individually to be resilient to single bad items
             raw = data.get("contacts", data) if isinstance(data, dict) else data
             if not isinstance(raw, list): return []
@@ -120,9 +121,13 @@ def parse_agent_response(text: str) -> list[SchoolContact]:
             contacts = []
             for item in raw:
                 try: contacts.append(SchoolContact.model_validate(item))
-                except Exception: continue
+                except ValidationError: continue
             return contacts
-    except Exception:
+    except (ValueError, Exception) as e:
+        # Fallback to broad exception just in case json_repair throws something else, 
+        # but primarily catch ValueError from json issues
+        if not isinstance(e, ValueError) and not type(e).__name__ == 'JSONDecodeError':
+            print(f"[WARN] Unexpected error in parse_agent_response: {e}")
         return []
 
 
@@ -131,9 +136,11 @@ async def _run_agent_once(
     city: str,
     state: str,
     session_service: InMemorySessionService,
+    csv_path: Path,
+    csv_lock: asyncio.Lock,
     existing_counts: dict[str, int] | None = None,
 ) -> list[SchoolContact]:
-    """Single attempt to run the agent for a city."""
+    """Single attempt to run the agent for a city, progressively saving contacts."""
     session = await session_service.create_session(
         app_name=runner.app_name, user_id="user"
     )
@@ -152,11 +159,23 @@ async def _run_agent_once(
         parts=[types.Part(text=prompt_text)],
     )
 
+    # Determine agent icon and short label
     agent_icon = "🎓" if "student" in runner.agent.name else "🤝"
-    agent_label = f"{agent_icon} {runner.agent.name.replace('_researcher', '').title():<10}"
+    agent_short = "Stud." if "student" in runner.agent.name else "Vol."
+    
+    # Track progress for this city from existing counts
+    cur_found = len(existing_counts) if existing_counts else 0
+    target = STUDENTS_TARGET if "student" in runner.agent.name else VOLUNTEERS_TARGET
+    
+    # Compactly include city and progress in label to disambiguate parallel logs
+    city_tag = f"{city}, {state}"
+    agent_label = f"{agent_icon} {agent_short:<5} | {city_tag:<16} | {cur_found:>2}/{target}"
 
     collected_text = ""
     print(f"  {agent_label} | 🚀 Starting research...")
+    
+    saved_contacts_count = 0
+    all_contacts: list[SchoolContact] = []
 
     async for event in runner.run_async(
         user_id="user",
@@ -168,30 +187,45 @@ async def _run_agent_once(
                 args = call.args or {}
                 if "search" in call.name.lower():
                     query = args.get("query", args.get("q", args.get("request", "unknown query")))
-                    print(f"  {agent_label} | 🔍 Searching Google: '{query}'")
+                    short_query = (query[:60] + "...") if len(query) > 63 else query
+                    print(f"  {agent_label} | 🔍 Google Search    : '{short_query}'")
                 elif "load" in call.name.lower() or "page" in call.name.lower():
                     url = args.get("url", "unknown url")
-                    print(f"  {agent_label} | 🌐 Scraping website: {url}")
+                    short_url = (url[:60] + "...") if len(url) > 63 else url
+                    print(f"  {agent_label} | 🌐 Scraping Website : {short_url}")
                 else:
-                    print(f"  {agent_label} | 🛠️ Using tool: {call.name}")
+                    print(f"  {agent_label} | 🛠️  Using tool     : {call.name}")
 
         if event.content and event.content.parts:
             for part in event.content.parts:
                 if part.text:
                     collected_text += part.text
+                    
+            # Progressively parse what we have so far
+            current_contacts = parse_agent_response(collected_text)
+            
+            # Identify purely new contacts that emerged in this chunk
+            if len(current_contacts) > saved_contacts_count:
+                new_contacts = current_contacts[saved_contacts_count:]
+                all_contacts.extend(new_contacts)
+                
+                rows_to_save = [contact_to_row(c, city, state) for c in new_contacts]
+                async with csv_lock:
+                    append_output_csv(csv_path, rows_to_save)
+                
+                saved_contacts_count = len(current_contacts)
+                
+                # Print the new contacts as they stream in
+                for c in new_contacts:
+                    school = (c.school_name[:35] + "..") if len(c.school_name) > 37 else c.school_name
+                    print(f"  {agent_label} | ✨ Found: 🏫 {school:<37} | 👤 {c.faculty_name}")
 
-    contacts = parse_agent_response(collected_text)
-    if contacts:
-        print(f"\n  {agent_label} | ✅ Successfully found {len(contacts)} contacts for {city}, {state}:")
-        for c in contacts:
-            print(f"     ➔ 🏫 {c.school_name}")
-            print(f"        👤 {c.faculty_name}  |  💼 {c.comments or 'No title'}")
-            print(f"        📧 {c.email or 'No email found'}")
-        print()
+    if all_contacts:
+        print(f"\n  {agent_label} | ✅ Completed {len(all_contacts)} total contacts for this run.\n")
     else:
-        print(f"\n  {agent_label} | ⚠️ No contacts parsed for {city}, {state}")
+        print(f"\n  {agent_label} | ⚠️ No contacts parsed.\n")
 
-    return contacts
+    return all_contacts
 
 
 async def search_city(
@@ -199,6 +233,8 @@ async def search_city(
     city: str,
     state: str,
     session_service: InMemorySessionService,
+    csv_path: Path,
+    csv_lock: asyncio.Lock,
     existing_counts: dict[str, int] | None = None,
     semaphore: asyncio.Semaphore | None = None,
 ) -> list[SchoolContact]:
@@ -207,39 +243,35 @@ async def search_city(
     When a semaphore is provided, it limits how many cities run concurrently
     to avoid overwhelming the API with too many parallel requests.
     """
-    async def _inner() -> list[SchoolContact]:
-        for attempt in range(MAX_RETRIES):
-            try:
-                return await asyncio.wait_for(
-                    _run_agent_once(runner, city, state, session_service, existing_counts),
-                    timeout=AGENT_TIMEOUT,
-                )
-            except asyncio.TimeoutError:
-                print(f"  [TIMEOUT] Agent timed out for {city}, {state} "
-                      f"(attempt {attempt + 1}/{MAX_RETRIES})")
+    for attempt in range(MAX_RETRIES):
+        try:
+            coro = _run_agent_once(runner, city, state, session_service, csv_path, csv_lock, existing_counts)
+            if semaphore is not None:
+                async with semaphore:
+                    return await asyncio.wait_for(coro, timeout=AGENT_TIMEOUT)
+            else:
+                return await asyncio.wait_for(coro, timeout=AGENT_TIMEOUT)
+        except asyncio.TimeoutError:
+            print(f"  [TIMEOUT] Agent timed out for {city}, {state} "
+                  f"(attempt {attempt + 1}/{MAX_RETRIES})")
+            if attempt < MAX_RETRIES - 1:
+                delay = RETRY_BASE_DELAY * (2 ** attempt)
+                await asyncio.sleep(delay)
+            else:
+                return []
+        except Exception as e:
+            err_str = str(e)
+            if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
                 if attempt < MAX_RETRIES - 1:
                     delay = RETRY_BASE_DELAY * (2 ** attempt)
+                    print(f"  [RATE LIMITED] {city}, {state} | Attempt {attempt + 1}/{MAX_RETRIES}. "
+                          f"Waiting {delay:.0f}s before retrying...")
                     await asyncio.sleep(delay)
                 else:
-                    return []
-            except Exception as e:
-                err_str = str(e)
-                if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
-                    if attempt < MAX_RETRIES - 1:
-                        delay = RETRY_BASE_DELAY * (2 ** attempt)
-                        print(f"  [RATE LIMITED] Attempt {attempt + 1}/{MAX_RETRIES}. "
-                              f"Waiting {delay:.0f}s before retrying...")
-                        await asyncio.sleep(delay)
-                    else:
-                        raise
-                else:
                     raise
-        return []
-
-    if semaphore is not None:
-        async with semaphore:
-            return await _inner()
-    return await _inner()
+            else:
+                raise
+    return []
 
 
 # ---------------------------------------------------------------------------
@@ -334,49 +366,43 @@ async def _process_city(
     idx = progress["done"] + 1
     total = progress["total"]
 
-    print(f"\n" + "━"*70)
-    print(f" 📍 [{idx}/{total}] RESEARCHING: {city}, {state} ".center(70, "━"))
-    print(f"━"*70)
-    print(f"\n🎯 Target: {STUDENTS_TARGET} elementary/middle + {VOLUNTEERS_TARGET} high school CS contacts")
-    print(f"⚡ Running agents concurrently...\n")
+    print(f"\n" + "═"*75)
+    header = f" 📍 [{idx}/{total}] RESEARCHING: {city}, {state} "
+    print(f"{header:^75}")
+    print(f"═"*75)
+    print(f"🎯 Target: {STUDENTS_TARGET} elementary/middle + {VOLUNTEERS_TARGET} high school CS contacts")
+    print(f"⚡ Running agents concurrently...")
 
     start = time.monotonic()
 
     results = await asyncio.gather(
-        search_city(students_runner, city, state, session_service, student_counts, semaphore),
-        search_city(volunteers_runner, city, state, session_service, volunteer_counts, semaphore),
+        search_city(students_runner, city, state, session_service, OUTPUT_STUDENTS, csv_lock, student_counts, semaphore),
+        search_city(volunteers_runner, city, state, session_service, OUTPUT_VOLUNTEERS, csv_lock, volunteer_counts, semaphore),
         return_exceptions=True,
     )
 
     elapsed = time.monotonic() - start
 
-    student_rows: list[dict] = []
-    volunteer_rows: list[dict] = []
+    student_res = results[0]
+    volunteer_res = results[1]
 
     # Process Students
-    student_res = results[0]
     if isinstance(student_res, Exception):
         print(f"  ❌ [ERROR] Students search failed for {city}, {state}: {student_res}")
+        student_count = 0
     else:
-        for c in student_res:
-            student_rows.append(contact_to_row(c, city, state))
+        student_count = len(student_res)
 
     # Process Volunteers
-    volunteer_res = results[1]
     if isinstance(volunteer_res, Exception):
         print(f"  ❌ [ERROR] Volunteers search failed for {city}, {state}: {volunteer_res}")
+        volunteer_count = 0
     else:
-        for c in volunteer_res:
-            volunteer_rows.append(contact_to_row(c, city, state))
-
-    # Serialize CSV writes to avoid interleaved output
-    async with csv_lock:
-        append_output_csv(OUTPUT_STUDENTS, student_rows)
-        append_output_csv(OUTPUT_VOLUNTEERS, volunteer_rows)
+        volunteer_count = len(volunteer_res)
 
     progress["done"] += 1
     print(f"\n  ⏱️ {city}, {state} completed in {elapsed:.1f}s "
-          f"({len(student_rows)} students, {len(volunteer_rows)} volunteers) "
+          f"({student_count} students, {volunteer_count} volunteers) "
           f"[{progress['done']}/{total} cities done]")
 
 
@@ -439,9 +465,23 @@ async def main() -> None:
         student_counts = seen_students.get(city_key, {})
         volunteer_counts = seen_volunteers.get(city_key, {})
         
-        # Skip city entirely if we've already found enough schools
-        if len(student_counts) >= STUDENTS_TARGET and len(volunteer_counts) >= VOLUNTEERS_TARGET:
-            print(f"[SKIP] {city}, {state} already has enough schools ({len(student_counts)} students, {len(volunteer_counts)} volunteers).")
+        # Evaluate targets based on MIN requirements
+        total_student_schools = len(student_counts)
+        total_student_contacts = sum(student_counts.values()) if student_counts else 0
+        
+        total_volunteer_schools = len(volunteer_counts)
+        total_volunteer_contacts = sum(volunteer_counts.values()) if volunteer_counts else 0
+        
+        student_done = (total_student_schools >= MIN_SCHOOLS_TARGET) and \
+                       (total_student_contacts >= MIN_CONTACTS_TARGET)
+                       
+        volunteer_done = (total_volunteer_schools >= MIN_SCHOOLS_TARGET) and \
+                         (total_volunteer_contacts >= MIN_CONTACTS_TARGET)
+        
+        if student_done and volunteer_done:
+            print(f"[SKIP] {city}, {state} already meets all targets "
+                  f"({total_student_schools}sch/{total_student_contacts}c stud, "
+                  f"{total_volunteer_schools}sch/{total_volunteer_contacts}c vol).")
             continue
             
         pending.append((city, state, student_counts, volunteer_counts))
@@ -479,9 +519,12 @@ async def main() -> None:
     print(f"━"*70 + "\n")
 
 
-if __name__ == "__main__":
+def main_cli():
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
         print("\n\n🛑 Process interrupted by user. Exiting gracefully...")
         sys.exit(0)
+
+if __name__ == "__main__":
+    main_cli()

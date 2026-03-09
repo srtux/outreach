@@ -1,5 +1,5 @@
 import pytest
-from src.models import SchoolContact, SchoolSearchResult
+from outreach.models import SchoolContact, SchoolSearchResult
 
 def test_school_contact_creation():
     contact = SchoolContact(

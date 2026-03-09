@@ -1,0 +1,2 @@
+[console_scripts]
+outreach = outreach.main:main_cli

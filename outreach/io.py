@@ -49,12 +49,14 @@ class CsvRepository:
             return
             
         async with self._lock:
-            file_exists = self.path.exists()
-            with open(self.path, "a", newline="", encoding="utf-8") as f:
-                writer = csv.DictWriter(f, fieldnames=OUTPUT_COLUMNS)
-                if not file_exists or self.path.stat().st_size == 0:
-                    writer.writeheader()
-                writer.writerows(rows)
+            def _write():
+                file_exists = self.path.exists()
+                with open(self.path, "a", newline="", encoding="utf-8") as f:
+                    writer = csv.DictWriter(f, fieldnames=OUTPUT_COLUMNS)
+                    if not file_exists or self.path.stat().st_size == 0:
+                        writer.writeheader()
+                    writer.writerows(rows)
+            await asyncio.to_thread(_write)
         print(f"Appended {len(rows)} rows to {self.path.name}")
 
 

@@ -64,9 +64,9 @@ async def test_process_city_exception():
         assert progress["done"] == 1
 
 @pytest.mark.asyncio
-async def test_main_no_api_key():
-    with patch("pathlib.Path.exists", return_value=True), \
-         patch("os.environ.get", return_value=None):
+async def test_main_no_api_key(monkeypatch):
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    with patch("pathlib.Path.exists", return_value=True):
         with pytest.raises(SystemExit):
             await main()
 
@@ -77,9 +77,9 @@ async def test_main_no_csv():
             await main()
 
 @pytest.mark.asyncio
-async def test_main_success():
+async def test_main_success(monkeypatch):
+    monkeypatch.setenv("GOOGLE_API_KEY", "fake_key")
     with patch("pathlib.Path.exists", return_value=True), \
-         patch("os.environ.get", return_value="fake_key"), \
          patch("outreach.main.read_regions", return_value=[{"City": "Aus", "State": "TX"}, {"City": "", "State": ""}]), \
          patch("outreach.main.build_agent") as mock_build, \
          patch("outreach.main.CsvRepository.get_completed_cities", return_value={}), \
@@ -90,9 +90,9 @@ async def test_main_success():
         mock_process.assert_awaited_once() # For Aus, TX. The empty city is skipped.
 
 @pytest.mark.asyncio
-async def test_main_skip_fully_completed():
+async def test_main_skip_fully_completed(monkeypatch):
+    monkeypatch.setenv("GOOGLE_API_KEY", "fake_key")
     with patch("pathlib.Path.exists", return_value=True), \
-         patch("os.environ.get", return_value="fake_key"), \
          patch("outreach.main.read_regions", return_value=[{"City": "Aus", "State": "TX"}]), \
          patch("outreach.main.build_agent"), \
          patch("outreach.main._process_city", new_callable=AsyncMock) as mock_process, \

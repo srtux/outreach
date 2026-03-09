@@ -2,6 +2,12 @@ import pytest
 import json
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
+from google.genai.errors import APIError
+
+class MockAPIError(APIError):
+    def __init__(self, msg, code=429):
+        Exception.__init__(self, msg)
+        self.code = code
 
 from outreach.search import parse_agent_response, search_city, _run_agent_once
 from outreach.config import MAX_RETRIES
@@ -78,7 +84,7 @@ async def test_search_city_rate_limit_retry():
     with patch("outreach.search._run_agent_once", new_callable=AsyncMock) as mock_run, \
          patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
         # First call 429, second succeeds
-        mock_run.side_effect = [Exception("429 Too Many Requests"), [contact]]
+        mock_run.side_effect = [MockAPIError("429 Too Many Requests"), [contact]]
         
         result = await search_city(runner, "Austin", "TX", session_service, MagicMock(), MagicMock())
         assert len(result) == 1
@@ -93,9 +99,9 @@ async def test_search_city_max_retries_fail():
     with patch("outreach.search._run_agent_once", new_callable=AsyncMock) as mock_run, \
          patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
         # All calls fail with 429
-        mock_run.side_effect = Exception("429 Too Many Requests")
+        mock_run.side_effect = MockAPIError("429 Too Many Requests")
         
-        with pytest.raises(Exception, match="429 Too Many Requests"):
+        with pytest.raises(MockAPIError, match="429 Too Many Requests"):
             await search_city(runner, "Austin", "TX", session_service, MagicMock(), MagicMock())
         
         assert mock_run.call_count == MAX_RETRIES

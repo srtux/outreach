@@ -1,6 +1,18 @@
+import asyncio
 from google.adk.agents import LlmAgent
 from google.adk.tools.google_search_agent_tool import create_google_search_agent, GoogleSearchAgentTool
-from google.adk.tools.load_web_page import load_web_page
+from google.adk.tools.load_web_page import load_web_page as sync_load_web_page
+
+async def load_web_page(url: str) -> str:
+    """Fetches the content in the url and returns the text in it.
+
+    Args:
+        url (str): The url to browse.
+
+    Returns:
+        str: The text content of the url.
+    """
+    return await asyncio.to_thread(sync_load_web_page, url)
 
 from outreach.models import SchoolSearchResult
 from outreach.prompts import STUDENTS_SYSTEM_PROMPT, VOLUNTEERS_SYSTEM_PROMPT

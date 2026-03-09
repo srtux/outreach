@@ -4,6 +4,7 @@ from pathlib import Path
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
+from google.genai.errors import APIError
 
 from outreach.models import SchoolSearchResult, SchoolContact
 from outreach.config import (
@@ -32,11 +33,8 @@ def parse_agent_response(text: str) -> list[SchoolContact]:
                 try: contacts.append(SchoolContact.model_validate(item))
                 except ValidationError: continue
             return contacts
-    except (ValueError, Exception) as e:
-        # Fallback to broad exception just in case json_repair throws something else, 
-        # but primarily catch ValueError from json issues
-        if not isinstance(e, ValueError) and not type(e).__name__ == 'JSONDecodeError':
-            print(f"[WARN] Unexpected error in parse_agent_response: {e}")
+    except ValueError as e:
+        # Pydantic ValidationError and JSONDecodeError both inherit from ValueError
         return []
 
 async def _run_agent_once(
@@ -104,27 +102,38 @@ async def _run_agent_once(
                     print(f"  {agent_label} | 🛠️  Using tool     : {call.name}")
 
         if event.content and event.content.parts:
+            chunk_text = ""
             for part in event.content.parts:
                 if part.text:
-                    collected_text += part.text
+                    chunk_text += part.text
+            collected_text += chunk_text
                     
-            # Progressively parse what we have so far
-            current_contacts = parse_agent_response(collected_text)
-            
-            # Identify purely new contacts that emerged in this chunk
-            if len(current_contacts) > saved_contacts_count:
-                new_contacts = current_contacts[saved_contacts_count:]
-                all_contacts.extend(new_contacts)
+            # Progressively parse what we have so far, but only if we likely finished an object
+            if "}" in chunk_text:
+                current_contacts = parse_agent_response(collected_text)
                 
-                rows_to_save = [contact_to_row(c, city, state) for c in new_contacts]
-                await repo.append_rows(rows_to_save)
-                
-                saved_contacts_count = len(current_contacts)
-                
-                # Print the new contacts as they stream in
-                for c in new_contacts:
-                    school = (c.school_name[:35] + "..") if len(c.school_name) > 37 else c.school_name
-                    print(f"  {agent_label} | ✨ Found: 🏫 {school:<37} | 👤 {c.faculty_name}")
+                # Identify purely new contacts that emerged in this chunk
+                if len(current_contacts) > saved_contacts_count:
+                    new_contacts = current_contacts[saved_contacts_count:]
+                    all_contacts.extend(new_contacts)
+                    
+                    rows_to_save = [contact_to_row(c, city, state) for c in new_contacts]
+                    await repo.append_rows(rows_to_save)
+                    
+                    saved_contacts_count = len(current_contacts)
+                    
+                    # Print the new contacts as they stream in
+                    for c in new_contacts:
+                        school = (c.school_name[:35] + "..") if len(c.school_name) > 37 else c.school_name
+                        print(f"  {agent_label} | ✨ Found: 🏫 {school:<37} | 👤 {c.faculty_name}")
+
+    # Final sweep to catch any remaining contacts
+    final_contacts = parse_agent_response(collected_text)
+    if len(final_contacts) > saved_contacts_count:
+        new_contacts = final_contacts[saved_contacts_count:]
+        all_contacts.extend(new_contacts)
+        rows_to_save = [contact_to_row(c, city, state) for c in new_contacts]
+        await repo.append_rows(rows_to_save)
 
     if all_contacts:
         print(f"\n  {agent_label} | ✅ Completed {len(all_contacts)} total contacts for this run.\n")
@@ -159,9 +168,9 @@ async def search_city(
                 await asyncio.sleep(delay)
             else:
                 return []
-        except Exception as e:
+        except APIError as e:
             err_str = str(e)
-            if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+            if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str or getattr(e, "code", None) == 429:
                 if attempt < MAX_RETRIES - 1:
                     delay = RETRY_BASE_DELAY * (2 ** attempt)
                     print(f"  [RATE LIMITED] {city}, {state} | Attempt {attempt + 1}/{MAX_RETRIES}. "

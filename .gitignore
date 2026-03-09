@@ -22,3 +22,6 @@ data/*.csv
 # Scripts
 debug_*.py
 *.log
+
+# Build Artifacts
+*.egg-info/

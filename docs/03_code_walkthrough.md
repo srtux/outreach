@@ -49,21 +49,32 @@ Because the Runner yields events back to our generator (`async for event in runn
 
 When the agent finally figures out the answer and writes its JSON object, it sends that back as `Text Output`, and we append it all into an `collected_text` string block.
 
-## Coercing LLM Dust into Diamonds (`parse_agent_response`)
+## Structured Output via `output_schema`
 
-The output of an LLM can be messy. Even if you ask for JSON, the LLM might reply with:
-```
-Here is the data you requested:
+Because we define an `output_schema` (the `SchoolSearchResult` Pydantic model) when building our agent in `src/main.py`, the Google ADK ensures that the LLM's final response is **pure valid JSON**. 
+
+Unlike older LLM patterns where you might get conversational "noise" (like "Here is your JSON:"), the Gemini model uses constrained decoding to strictly output only the fields defined in our model. 
+
 ```json
-{ "contacts": [{"school_name": "Test", "faculty_name": "John"}]}
+{
+  "contacts": [
+    {
+      "school_name": "Test Academy",
+      "faculty_name": "John Doe",
+      "email": "j.doe@test.edu"
+    }
+  ]
+}
 ```
-Hope this helps!
-```
-If we run Python's built-in `json.loads()` on this, it will instantly crash because of the markdown fences and surrounding chat text. 
 
-To solve this, we use the library **`json-repair`**. We simply pass `json_repair.loads(text)` and it automatically strips the markdown, fixes unescaped characters, adds missing brackets, and gives us a clean Python dictionary.
+## Parsing the Response (`parse_agent_response`)
 
-Next, we validate that dictionary against our **Pydantic Model** (`SchoolContact`). Pydantic enforces types (strings must be strings, missing URLs should default to `""`). If the LLM invents a new field or forgets a required one, Pydantic throws an error, preventing corrupt data from ruining our output CSVs. We call `SchoolContact.model_validate(item)` over a `try/except` loop so one malformed row doesn't break the whole list.
+Even though the output is structured, we still want our code to be bulletproof. Our `parse_agent_response` function handles the final conversion:
+
+1. **`json-repair`**: We use the `json_repair` library instead of `json.loads()`. If the LLM output is truncated or has minor syntax errors (like missing trailing brackets), `json-repair` automatically fixes them.
+2. **Pydantic Validation**: We pass the repaired JSON into `SchoolSearchResult.model_validate()`. This ensures all data types are correct and all required fields are present.
+3. **Resilience Loop**: If a specific contact item is malformed but the rest are fine, we try to parse each contact individually so we don't lose the entire batch.
+
 
 ## Escaping Rate Limits (`search_city`)
 

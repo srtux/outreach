@@ -1,20 +1,28 @@
 # 03: Code Walkthrough
 
-This guide walks you through the core logic of the application, focusing on `outreach/main.py` (orchestration) and `outreach/search.py` (the ADK `Runner` streaming events, the data parser, and the retry loops).
+This guide walks you through the core logic of the application, focusing on `outreach/main.py` (the orchestrator) and `outreach/search.py` (where the AI actually talks to the internet).
 
-## The Overall Flow
+## The Overall Flow (`main.py`)
 
-At a high level, the `main()` function:
-1. Validates prerequisites (CSV exists, API Key exists).
-2. Reads the target cities from `data/regions.csv`.
-3. Checks output files to evaluate previous progress against minimum thresholds (`MIN_SCHOOLS_TARGET`, `MIN_CONTACTS_TARGET`). If the city satisfies both, it skips it.
-4. Uses `asyncio.gather` to launch tasks for all pending cities concurrently, gated by a `Semaphore` so we don't overwhelm Google.
+At a high level, the `main()` function is the boss. It tells everyone what to do:
+1. Validates that you have a `regions.csv` file and a Google API Key.
+2. Checks the `output.csv` files to see what cities you've already finished, so it can skip them and save time.
+3. Groups all the remaining cities together and uses `asyncio.gather` to launch them all at the exact same time (remember the Chef kitchen analogy from Chapter 2).
 
-## How the ADK `Runner` Works (`outreach/search.py`)
+### Trapping Sneaky Errors
+When `asyncio.gather` runs 30 agents at once, what happens if *one* agent crashes because of a weird website? Normally, the whole program would explode and crash.
+We fix this by using `return_exceptions=True`. This tells Python: *"If an agent crashes, just hand me the Error object quietly, but let the other 29 agents keep working!"* Afterwards, `main()` loops through the results, finds any sneaky exceptions, and prints them out nicely so you can fix them later.
 
-When we process a city, we call `_run_agent_once()`. This is where the ADK does the heavy lifting. We construct a plain English prompt like `"Find school contacts in Austin, TX"`, package it as a `user_msg`, and feed it to the `Runner`. 
+### Graceful Shutdown (Closing the Mailbox)
+At the very end of `main()`, we call `await volunteers_repo.shutdown()`. 
+Because our agents send data to a background queue (the mail drop box), if the program just suddenly stopped at the end, the background worker might not have finished writing the last 5 envelopes to the CSV file! 
+`shutdown()` acts like locking the doors and waiting until the worker guarantees every last piece of mail has been securely written.
 
-Instead of waiting for one massive response, the `Runner` **streams events back to us** in real time as the agent "thinks" and interacts with tools. Let's look at exactly what happens under the hood when the Runner executes:
+## How the ADK `Runner` Works (`search.py`)
+
+When we launch an agent for a city, we call `_run_agent_once()`. We construct a simple English sentence like `"Find school contacts in Austin, TX"`, and feed it to the ADK `Runner`. 
+
+Instead of freezing for 60 seconds and handing back a massive block of text, the `Runner` **streams events back to us** in real time as the agent "thinks". 
 
 ```mermaid
 sequenceDiagram
@@ -24,71 +32,36 @@ sequenceDiagram
     participant Tools as Google Search / Web Scraper
     
     Code->>Runner: run_async(user_msg)
-    Runner->>Agent: "Find contacts in Austin, TX"
+    Runner->>Agent: "Find contacts in Austin"
     
-    note over Agent: Agent realizes it needs<br/>to find school URLs
-    Agent->>Runner: Yields Tool Call: "Use GoogleSearchAgentTool"
+    note over Agent: Agent needs to find URLs
+    Agent->>Runner: Yields Tool Call: "Use GoogleSearch"
     Runner-->>Code: Event: Function Call (search)
-    Runner->>Tools: Execute Search API
-    Tools-->>Runner: Returns SERP links
-    Runner->>Agent: "Here are the search results"
     
-    note over Agent: Agent picks the best<br/>URL from search results
+    note over Agent: Agent picks the best URL
     Agent->>Runner: Yields Tool Call: "Use load_web_page"
     Runner-->>Code: Event: Function Call (scrape)
-    Runner->>Tools: Fetch HTTP & Clean HTML
-    Tools-->>Runner: Returns raw text of the page
-    Runner->>Agent: "Here is the staff directory text"
     
-    note over Agent: Agent parses emails<br/>out of the text
-    Agent->>Runner: Yields Text Response (JSON Data)
+    note over Agent: Agent parses emails
+    Agent->>Runner: Yields Text Output (JSON Data)
     Runner-->>Code: Event: Text Output
 ```
 
-Because the Runner yields events back to our generator (`async for event in runner.run_async(...)`), we can intercept `FunctionCalls` to log them nicely in the terminal, giving us a live dashboard showing *exactly* what website the agent is scraping at any given second. 
+Because the Runner streams `Events` back to us, we can watch them live! When we detect a `FunctionCall`, our terminal prints out *"Scraping Website X"*. It's like a live dashboard.
 
-As the agent gathers information, it streams back `Text Output` representing the JSON structured array. Crucially, we parse this `collected_text` **on every single iteration of the loop**. 
+### Keeping the AI Focused (The "Lost in the Middle" Problem)
+If we run a city like Chicago that has 100 schools, we don't want the agent finding the *same* school twice. So, we inject a list of "Already Found Schools" into the prompt. 
+However, if that list gets to be 80 schools long, the LLM prompt becomes enormous. AI models suffer from the "Lost in the Middle" phenomenon—if you give them too much text, they get distracted and forget the core instructions.
+To fix this, we clip the list to only the **last 20 schools** and simply add a note saying `(and 60 others)`. The LLM stays laser-focused and runs faster!
 
-By running `json-repair` on the partial text array, we can detect the exact moment a new `SchoolContact` object becomes fully formed. Once detected, we immediately wrap the append operation in a `csv_lock` and write the new contact straight to the output dataset. This **Progressive Streaming** guarantees no data loss in the event of an interruption.
+## Structured Output & Parsing the JSON
 
-## Structured Output via `output_schema`
+When the AI finds emails, we force it to reply in strict **JSON format** (a data format computers can easily read) instead of conversational English. We do this by defining a Pydantic `output_schema` in the agent configuration.
 
-Because we define an `output_schema` (the `SchoolSearchResult` Pydantic model) when building our agent in `outreach/agents.py`, the Google ADK ensures that the LLM's final response is **pure valid JSON**. 
+As the `Runner` streams back this JSON text chunk by chunk, we collect all the pieces into one big string. When the stream is completely finished, we call `parse_agent_response()`:
 
-Unlike older LLM patterns where you might get conversational "noise" (like "Here is your JSON:"), the Gemini model uses constrained decoding to strictly output only the fields defined in our model. 
-
-```json
-{
-  "contacts": [
-    {
-      "school_name": "Test Academy",
-      "faculty_name": "John Doe",
-      "email": "j.doe@test.edu"
-    }
-  ]
-}
-```
-
-## Parsing the Response (`parse_agent_response`)
-
-Even though the output is structured, we still want our code to be bulletproof. Our `parse_agent_response` function handles the final conversion:
-
-1. **`json-repair`**: We use the `json_repair` library instead of `json.loads()`. If the LLM output is truncated or has minor syntax errors (like missing trailing brackets), `json-repair` automatically fixes them.
-2. **Pydantic Validation**: We pass the repaired JSON into `SchoolSearchResult.model_validate()`. This ensures all data types are correct and all required fields are present.
-3. **Resilience Loop**: If a specific contact item is malformed but the rest are fine, we try to parse each contact individually so we don't lose the entire batch.
-
-
-## Escaping Rate Limits (`search_city`)
-
-Google places strict limits on how many API calls you can make per minute (Quota limits / 429 Too Many Requests). When you process 50 cities with 2 agents each, you *will* hit these limits.
-
-Instead of crashing the program, we use **Exponential Backoff** wrapped around our runner in `search_city(...)`:
-
-1. It attempts the call (`_run_agent_once`).
-2. If it catches an Exception with "429" or "RESOURCE_EXHAUSTED", it calculates a delay time.
-3. The formula `delay = RETRY_BASE_DELAY * (2 ** attempt)` means the delay doubles every time: 15 seconds -> 30 seconds -> 60 seconds.
-4. It calls `await asyncio.sleep(delay)`, pausing *just this specific city's task* without stopping the rest of the app!
-5. After sleeping, the loop reiterates and checks again, for up to `MAX_RETRIES`.
+1. **`json-repair`**: Sometimes, the LLM makes a tiny typo (missing a final bracket `}`). A regular `json.loads` would crash the whole app. We use a library called `json-repair` which acts like an autocorrect, fixing broken brackets instantly.
+2. **Pydantic Validation**: We then force the data into our strict `SchoolSearchResult` model. This guarantees that every contact actually has a "School Name", a "Faculty Name", and an "Email" before we allow it to be saved to the database.
 
 ---
 

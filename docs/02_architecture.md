@@ -1,19 +1,21 @@
 # 02: Architecture and Concurrency
 
-Now that you know what an agent is, let's look at how this specific project is architected. We use three advanced patterns here: **Dual-Tool Strategy** to prevent hallucinations, **Concurrency** to make the script run fast, and **Object-Oriented Design (OOP)** to efficiently manage application state.
+Now that you know what an agent is, let's look at how this specific project is built. We use three advanced patterns here: **Dual-Tool Strategy** to prevent hallucinations, **Concurrency** to make the script run incredibly fast, and **Asynchronous Queues** to handle saving data safely.
 
 ## The Dual-Tool Strategy
 
-To ensure our AI never makes up data, we force it to follow a specific research path. We do this by giving it two highly specific tools.
+To guarantee our AI never hallucinates fake emails, we restrict its behavior using two highly specific tools defined in `outreach/agents.py`.
 
 ### 1. `GoogleSearchAgentTool`
-Instead of just using a raw search API, we actually use a "Sub-Agent". The ADK allows us to wrap a smaller, faster model (`gemini-2.0-flash`) into a tool specifically designed to query Google Search and read the Search Engine Results Page (SERP).
-When our main agent needs to find a school, it asks the Sub-Agent to do the searching and return a reliable URL.
+Instead of just using a raw, basic search plugin, we actually use a "Sub-Agent". The ADK allows us to wrap a smaller, faster model (using the same `MODEL_ID` like `gemini-3-flash-preview`) into a tool specifically designed just to query Google Search and read the Search Engine Results Page.
+When our main agent needs to find a school, it asks this Sub-Agent to do the searching and return a reliable, exact URL.
 
-### 2. `load_web_page`
-Once the agent has a URL, it needs to read the data on that page. `load_web_page` is a custom Python function we wrote. It uses the `requests` library to download the web page, and `BeautifulSoup` to strip away all the messy HTML tags so the LLM only sees the raw, readable text.
+### 2. `load_web_page` & Strict Timeouts
+Once the agent has a URL, it needs to read the data on that page. `load_web_page` is a custom Python function we wrote. It downloads the web page and strips away all the messy HTML tags so the LLM only sees the raw, readable text.
 
-Here is a Mermaid diagram contrasting a naive LLM with our Dual-Tool Architecture:
+**The Timeout Catch**: What if the website is broken or stuck loading forever? If our code just waited, the agent would freeze entirely. We protect against this by wrapping our scraper in a strict 15-second `timeout=15.0`. If a website takes too long, we automatically return a text string to the LLM saying, *"Error: Failed to load"*, which allows the LLM to gracefully give up on that bad link and try another one!
+
+Here is a diagram showing how this tool flow guarantees accuracy:
 
 ```mermaid
 graph TD
@@ -21,56 +23,40 @@ graph TD
     classDef good fill:#e8f5e9,stroke:#66bb6a,stroke-width:2px,color:#333
 
     subgraph "Naive Approach (Hallucination Prone)"
-        Prompt["Prompt: 'Find principal emails'"] --> LLM1[LLM relies on internal training memory]
+        Prompt["Prompt: 'Find principal emails'"] --> LLM1[LLM guesses from training memory]
         LLM1 --> Output1["Output: Fake/Guessed Emails"]:::bad
     end
 
     subgraph "Dual-Tool Architecture (Accurate)"
         Prompt2["Prompt: 'Research these roles'"] --> Agent[Main LLM Agent]
-        Agent -- "1. I need to find schools" --> Search[GoogleSearchAgent]
+        Agent -- "1. Need to find schools" --> Search[GoogleSearchAgent]
         Search -- "Here are official URLs" --> Agent
-        Agent -- "2. I need to read the staff directory" --> Scraper[load_web_page Tool]
+        Agent -- "2. Read the staff directory" --> Scraper[load_web_page Tool]
         Scraper -- "Here is the raw page text" --> Agent
-        Agent -- "3. Extract exact emails from text" --> Output2["Output: Verified Real Emails"]:::good
+        Agent -- "3. Parse text for emails" --> Output2["Output: Verified Real Emails"]:::good
     end
 ```
 
-## Concurrency: Making it Fast
+## Concurrency: The Kitchen Analogy
 
-We want to research multiple cities. Doing this one by one (synchronously) would take hours. Instead, we use **Python's `asyncio`** to do things concurrently (at the same time).
+We need to research dozens of cities. Doing this one by one (synchronously) would take hours. Instead, we use **Python's `asyncio`** library.
 
-When our code reads `regions.csv`, it creates a list of cities. It then launches a "task" for each city. For every city, it launches *two* parallel agents: one looking for Students (Principals) and one looking for Volunteers (CS Teachers).
+**Analogy:** Imagine a chef in a kitchen. Synchronous code means the chef puts a pot of water on the stove and stands there staring at it for 10 minutes until it boils, doing nothing else. `asyncio` means the chef puts the water on the stove, *immediately walks away* to chop onions, and only returns to the stove when the buzzer goes off. 
 
-```mermaid
-graph TD
-    classDef logic fill:#e3f2fd,stroke:#42a5f5,stroke-width:2px,color:#333
-    classDef agent fill:#fff3e0,stroke:#ffb74d,stroke-width:2px,color:#333
+When our code reads `regions.csv`, it creates a list of cities. It then launches a "task" for each city. For *every single city*, it launches *two parallel agents*: one looking for Students (Principals) and one looking for Volunteers (CS Teachers). Any time an agent is waiting for Google to respond (water boiling), `asyncio` switches focus to another agent (chopping onions). They all process seamlessly overlapping each other.
 
-    Main[outreach/main.py Orchestrator]:::logic --> CSV[(regions.csv)]:::logic
-    CSV --> City1["Process: Austin, TX"]:::logic
-    CSV --> City2["Process: Dallas, TX"]:::logic
-    CSV --> City3["Process: Phoenix, AZ"]:::logic
+### The Semaphore (The Bouncer)
+However, if we ask the Google API to run 100 agents at the exact same millisecond, Google will block us with an error (`429 Too Many Requests`). 
 
-    City1 --> SA1[Students Agent]:::agent
-    City1 --> VA1[Volunteers Agent]:::agent
-    
-    City2 --> SA2[Students Agent]:::agent
-    City2 --> VA2[Volunteers Agent]:::agent
+To prevent this, we use a `Semaphore`. Think of a semaphore as a bouncer at a club. If our `MAX_CONCURRENT_AGENTS` in `config.py` is set to 15, the bouncer only lets 15 agents inside at once. The 16th agent must wait in line outside until one of the first 15 finishes and leaves.
 
-    City3 --> SA3[Students Agent]:::agent
-    City3 --> VA3[Volunteers Agent]:::agent
-```
+### Asynchronous Queues for CSV I/O (The Mail Drop)
+When an agent finds a school contact, we need to save it to our `students.csv` file. 
 
-While Agent 1 is waiting for Google to respond, `asyncio` automatically flips over to Agent 2 and lets it do some work, and so on.
+If all 15 concurrent agents tried to write to the same file at the exact same time, the file would get horribly corrupted. Originally, programmers used a "Lock" (which acts like a bathroom key where only one agent goes in at a time). But Locks are slow bottlenecks!
 
-### The Semaphore
-However, if we try to query the Google API with 100 agents at the exact same millisecond, Google will block us (this is called a Rate Limit, or `429 Too Many Requests`). 
-
-To prevent this, we use a `Semaphore`. Think of a semaphore as a bouncer at a club. If our `MAX_CONCURRENT_CITIES` is set to 3, the semaphore only lets 3 cities process at a time. The 4th city must wait in line until one of the first 3 finishes.
-
-### Object-Oriented State Management
-
-To keep our code clean while running all these concurrent tasks, we use a central `ResearchApp` object. This acts as a single container holding our semaphore, API sessions, and database connections (`CsvRepository`). Instead of passing 10 different variables into every function, we just pass the `ResearchApp` context!
+Instead, we use the **Actor Pattern** inside `io.py` via an `asyncio.Queue()`. 
+**Analogy:** The queue is a mail drop box. Agents don't open the file; they just drop their contacts into the slot and instantly get back to work! Behind the scenes, we have a quiet background worker task that pulls the envelopes out of the box one by one and safely writes them to the CSV.
 
 ---
-**Next up:** Let's dive into the code itself to see how this all connects in [03: Code Walkthrough](./03_code_walkthrough.md).
+**Next up:** Let's dive into the core event loop and LLM parsing logic in [03: Code Walkthrough](./03_code_walkthrough.md).

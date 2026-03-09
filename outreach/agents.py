@@ -12,7 +12,13 @@ async def load_web_page(url: str) -> str:
     Returns:
         str: The text content of the url.
     """
-    return await asyncio.to_thread(sync_load_web_page, url)
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(sync_load_web_page, url),
+            timeout=15.0
+        )
+    except Exception as e:
+        return f"Error: Failed to load {url}. {e.__class__.__name__}"
 
 from outreach.models import SchoolSearchResult
 from outreach.prompts import STUDENTS_SYSTEM_PROMPT, VOLUNTEERS_SYSTEM_PROMPT
@@ -36,7 +42,7 @@ def build_agent(agent_type: str) -> LlmAgent:
         name = "volunteers_researcher"
 
     # search_agent is a lightweight agent specifically for finding search terms and processing SERP results
-    search_agent = create_google_search_agent("gemini-2.0-flash")
+    search_agent = create_google_search_agent(MODEL_ID)
     search_agent_tool = GoogleSearchAgentTool(agent=search_agent)
 
     return LlmAgent(

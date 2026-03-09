@@ -25,7 +25,7 @@ MAX_RETRIES = 5
 RETRY_BASE_DELAY = 15.0  # seconds; doubles each retry
 
 # Concurrency settings
-MAX_CONCURRENT_CITIES = int(os.environ.get("MAX_CONCURRENT_CITIES", "15"))
+MAX_CONCURRENT_AGENTS = int(os.environ.get("MAX_CONCURRENT_AGENTS", "15"))
 AGENT_TIMEOUT = 300  # seconds; max time for a single agent run
 
 # Output CSV columns

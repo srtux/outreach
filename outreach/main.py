@@ -16,7 +16,7 @@ from outreach.config import (
     REGIONS_CSV, OUTPUT_STUDENTS, OUTPUT_VOLUNTEERS,
     STUDENTS_TARGET, VOLUNTEERS_TARGET,
     MIN_SCHOOLS_TARGET, MIN_CONTACTS_TARGET,
-    MAX_CONCURRENT_CITIES
+    MAX_CONCURRENT_AGENTS
 )
 from outreach.io import read_regions, CsvRepository
 from outreach.agents import build_agent
@@ -172,10 +172,10 @@ async def main() -> None:
         print("No new cities to process.")
         return
 
-    print(f"\n📋 {len(pending)} cities to process (max {MAX_CONCURRENT_CITIES} concurrently)")
+    print(f"\n📋 {len(pending)} cities to process (max {MAX_CONCURRENT_AGENTS} agents concurrently)")
 
     # Semaphore limits concurrent API calls to prevent 429 errors from Google Gemini
-    semaphore = asyncio.Semaphore(MAX_CONCURRENT_CITIES)
+    semaphore = asyncio.Semaphore(MAX_CONCURRENT_AGENTS)
     progress = {"done": 0, "total": len(pending)}
 
     app = ResearchApp(
@@ -197,7 +197,17 @@ async def main() -> None:
         )
         for city, state, student_counts, volunteer_counts in pending
     ]
-    await asyncio.gather(*tasks, return_exceptions=True)
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    
+    # Explicitly raise any unhandled exceptions that escaped _process_city
+    for result in results:
+        if isinstance(result, Exception):
+            print(f"CRITICAL ERROR escaped process city loop: {result}")
+            raise result
+
+    # Gracefully shut down the background writers
+    await students_repo.shutdown()
+    await volunteers_repo.shutdown()
 
     overall_elapsed = time.monotonic() - overall_start
 

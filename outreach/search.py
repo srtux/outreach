@@ -53,8 +53,14 @@ async def _run_agent_once(
     prompt_text = f"Find school contacts in {city}, {state}."
     if existing_counts:
         prompt_text += "\n\nAlready researched schools for this area:\n"
-        for school, count in existing_counts.items():
+        schools_list = list(existing_counts.items())
+        # Cap the context injection to prevent massive prompt bloat (Lost in the Middle)
+        for school, count in schools_list[:20]:
             prompt_text += f"- {school}: {count} contacts found\n"
+        
+        if len(schools_list) > 20:
+            prompt_text += f"\n...and {len(schools_list) - 20} other schools already researched at length.\n"
+            
         prompt_text += "\nSkip schools that already have 2 or more contacts."
         prompt_text += " Retry schools with 0 or 1 contacts to try to find more."
         prompt_text += " Focus your search on finding NEW schools not listed above."
@@ -102,40 +108,27 @@ async def _run_agent_once(
                     print(f"  {agent_label} | 🛠️  Using tool     : {call.name}")
 
         if event.content and event.content.parts:
-            chunk_text = ""
             for part in event.content.parts:
                 if part.text:
-                    chunk_text += part.text
-            collected_text += chunk_text
-                    
-            # Progressively parse what we have so far, but only if we likely finished an object
-            if "}" in chunk_text:
-                current_contacts = parse_agent_response(collected_text)
-                
-                # Identify purely new contacts that emerged in this chunk
-                if len(current_contacts) > saved_contacts_count:
-                    new_contacts = current_contacts[saved_contacts_count:]
-                    all_contacts.extend(new_contacts)
-                    
-                    rows_to_save = [contact_to_row(c, city, state) for c in new_contacts]
-                    await repo.append_rows(rows_to_save)
-                    
-                    saved_contacts_count = len(current_contacts)
-                    
-                    # Print the new contacts as they stream in
-                    for c in new_contacts:
-                        school = (c.school_name[:35] + "..") if len(c.school_name) > 37 else c.school_name
-                        print(f"  {agent_label} | ✨ Found: 🏫 {school:<37} | 👤 {c.faculty_name}")
+                    collected_text += part.text
+                    # Notice: We no longer try to progressively parse the text stream
+                    # here via `json_repair`. It was $O(N^2)$ and led to data corruption
+                    # when json_repair inaccurately closed partial JSON objects.
 
-    # Final sweep to catch any remaining contacts
-    final_contacts = parse_agent_response(collected_text)
-    if len(final_contacts) > saved_contacts_count:
-        new_contacts = final_contacts[saved_contacts_count:]
-        all_contacts.extend(new_contacts)
-        rows_to_save = [contact_to_row(c, city, state) for c in new_contacts]
-        await repo.append_rows(rows_to_save)
-
+    # -------------------------------------------------------------
+    # Stream Complete — perform exactly one pass to parse the JSON
+    # -------------------------------------------------------------
+    all_contacts = parse_agent_response(collected_text)
+    
     if all_contacts:
+        rows_to_save = [contact_to_row(c, city, state) for c in all_contacts]
+        await repo.append_rows(rows_to_save)
+        
+        # Print summary of the batch we found
+        for c in all_contacts:
+            school = (c.school_name[:35] + "..") if len(c.school_name) > 37 else c.school_name
+            print(f"  {agent_label} | ✨ Found: 🏫 {school:<37} | 👤 {c.faculty_name}")
+            
         print(f"\n  {agent_label} | ✅ Completed {len(all_contacts)} total contacts for this run.\n")
     else:
         print(f"\n  {agent_label} | ⚠️ No contacts parsed.\n")

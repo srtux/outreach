@@ -21,7 +21,8 @@ def test_read_regions(tmp_path):
     assert regions[0]["City"] == "Austin"
     assert regions[1]["State"] == "TX"
 
-def test_read_completed_cities(tmp_path):
+@pytest.mark.asyncio
+async def test_read_completed_cities(tmp_path):
     csv_file = tmp_path / "output.csv"
     csv_file.write_text("City/State,School Name,School Link,Faculty Name,Email,Dear Line,Comments\n"
                         "\"Austin, TX\",School A,,John,,, \n"
@@ -29,15 +30,18 @@ def test_read_completed_cities(tmp_path):
                         "\"Dallas, TX\",School B,,Jane,,, \n")
     repo = CsvRepository(csv_file)
     seen = repo.get_completed_cities()
+    await repo.shutdown()
     assert "Austin|TX" in seen
     assert "Dallas|TX" in seen
     assert len(seen) == 2
     assert seen["Austin|TX"]["School A"] == 2
     assert seen["Dallas|TX"]["School B"] == 1
 
-def test_read_completed_cities_missing_file(tmp_path):
+@pytest.mark.asyncio
+async def test_read_completed_cities_missing_file(tmp_path):
     repo = CsvRepository(tmp_path / "nonexistent.csv")
     seen = repo.get_completed_cities()
+    await repo.shutdown()
     assert len(seen) == 0
 
 @pytest.mark.asyncio
@@ -48,6 +52,7 @@ async def test_append_output_csv(tmp_path):
     
     # Should create file and headers
     await repo.append_rows(rows)
+    await repo._queue.join()
     assert csv_file.exists()
     content = csv_file.read_text()
     assert "City/State,School Name" in content
@@ -55,5 +60,7 @@ async def test_append_output_csv(tmp_path):
     
     # Append another row, shouldn't duplicate headers
     await repo.append_rows(rows)
+    await repo._queue.join()
     lines = csv_file.read_text().strip().split('\n')
     assert len(lines) == 3  # header + 2 rows
+    await repo.shutdown()

@@ -16,10 +16,34 @@ def read_regions(csv_path: Path) -> list[dict]:
 
 
 class CsvRepository:
-    """Encapsulates I/O operations and asynchronous locking for a single CSV file."""
+    """Encapsulates I/O operations and an asynchronous queue for a single CSV file."""
     def __init__(self, path: Path):
         self.path = path
-        self._lock = asyncio.Lock()
+        self._queue = asyncio.Queue()
+        self._worker_task = asyncio.create_task(self._worker())
+
+    async def _worker(self):
+        """Background task that continually processes the write queue."""
+        while True:
+            rows = await self._queue.get()
+            if rows is None:  # Shutdown signal
+                self._queue.task_done()
+                break
+                
+            try:
+                def _write():
+                    file_exists = self.path.exists()
+                    with open(self.path, "a", newline="", encoding="utf-8") as f:
+                        writer = csv.DictWriter(f, fieldnames=OUTPUT_COLUMNS)
+                        if not file_exists or self.path.stat().st_size == 0:
+                            writer.writeheader()
+                        writer.writerows(rows)
+                await asyncio.to_thread(_write)
+                print(f"Appended {len(rows)} rows to {self.path.name}")
+            except Exception as e:
+                print(f"[ERROR] Failed to write to {self.path.name}: {e}")
+            finally:
+                self._queue.task_done()
 
     def get_completed_cities(self) -> dict[str, dict[str, int]]:
         """Read the output CSV and return a mapping of 'City|State' -> 'School Name' -> count of contacts."""
@@ -44,20 +68,16 @@ class CsvRepository:
         return {k: dict(v) for k, v in seen.items()}
 
     async def append_rows(self, rows: list[dict]) -> None:
-        """Asynchronously append rows to the output CSV while holding the lock."""
+        """Asynchronously enqueue rows to be appended to the output CSV."""
         if not rows:
             return
             
-        async with self._lock:
-            def _write():
-                file_exists = self.path.exists()
-                with open(self.path, "a", newline="", encoding="utf-8") as f:
-                    writer = csv.DictWriter(f, fieldnames=OUTPUT_COLUMNS)
-                    if not file_exists or self.path.stat().st_size == 0:
-                        writer.writeheader()
-                    writer.writerows(rows)
-            await asyncio.to_thread(_write)
-        print(f"Appended {len(rows)} rows to {self.path.name}")
+        await self._queue.put(rows)
+        
+    async def shutdown(self):
+        """Signal the worker to flush all remaining items and stop."""
+        await self._queue.put(None)
+        await self._worker_task
 
 
 def contact_to_row(contact: SchoolContact, city: str, state: str) -> dict:

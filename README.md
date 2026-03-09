@@ -97,7 +97,6 @@ outreach/
 ├── outreach/                              # Domain Logic (Source Package)
 │   ├── main.py                            # Entrypoint, Agent Definition, Orchestration
 │   └── models.py                          # Pydantic JSON schemas
-├── scripts/                               # Interactive debug & helper utilities
 ├── tests/                                 # Unit & Integration tests
 │   ├── test_main.py                       
 │   └── test_models.py                     

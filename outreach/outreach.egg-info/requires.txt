@@ -1,7 +1,0 @@
-beautifulsoup4>=4.14.3
-google-adk
-json-repair
-lxml>=6.0.2
-pydantic
-python-dotenv
-requests>=2.32.5

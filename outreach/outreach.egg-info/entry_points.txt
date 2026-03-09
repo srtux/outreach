@@ -1,2 +1,0 @@
-[console_scripts]
-outreach = src.main:main_cli

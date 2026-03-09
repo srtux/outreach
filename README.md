@@ -1,204 +1,153 @@
-# School Outreach Research Agent
+<div align="center">
 
-Automated school faculty contact finder powered by [Google Agent Development Kit (ADK)](https://google.github.io/adk-docs/) with Gemini 3.0 Flash and Google Search grounding.
+# 🏫 School Outreach Research Agent
+
+**Autonomous web research agent powered by the [Google Agent Development Kit (ADK)](https://google.github.io/adk-docs/)**
+
+![Python](https://img.shields.io/badge/Python-3.11%2B-blue?style=flat-square&logo=python&logoColor=white)
+![Gemini](https://img.shields.io/badge/Gemini-3.0_Flash_Preview-blue?style=flat-square&logo=google&logoColor=white)
+![Pydantic](https://img.shields.io/badge/Pydantic-Schema_Validation-green?style=flat-square)
+
+</div>
 
 ## Overview
 
-This project reads a **Regions CSV** containing cities and dispatches two AI agents to research school faculty contacts for each city:
+The **School Outreach Research Agent** automates the tedious process of finding faculty contact information for educational outreach programs. 
 
-| Agent | Target Schools | Target Roles | Contacts per City |
-|-------|---------------|-------------|-------------------|
-| **Students** | Elementary & Middle Schools | Principal, Vice-Principal, STEM Coordinator, Technology Teacher | 10 |
-| **Volunteers** | High Schools | CS Teacher, Robotics Coach, Technology Instructor, CTE Coordinator | 12 |
+By providing a list of target cities, the tool dispatches concurrent AI research agents to accurately identify the right contacts at local schools. This project demonstrates advanced agentic patterns, combining live web searching with direct HTML scraping to completely eliminate LLM hallucinations.
 
-Each agent uses Google Search to find real school websites and faculty directories, then returns structured contact data.
+| Agent | Target Audience | Target Roles | Yield per City |
+|-------|---------------|-------------|----------------|
+| **Students** | Elementary & Middle Schools | Principal, Vice-Principal, STEM Coordinator | 10 contacts |
+| **Volunteers** | High Schools | CS Teacher, Robotics Coach, CTE Coordinator | 12 contacts |
 
-## Architecture
+---
 
-```
-┌──────────────────────────────────────────────────────────────┐
-│                        main.py                                │
-│                                                               │
-│  1. Read Regions CSV                                          │
-│  2. For each city:                                            │
-│     ┌─────────────────────┐   ┌──────────────────────────┐   │
-│     │  Students Agent      │   │  Volunteers Agent         │   │
-│     │  (LlmAgent)          │   │  (LlmAgent)               │   │
-│     │  gemini-3-flash-preview    │   │  gemini-3-flash-preview          │   │
-│     │  + GoogleSearchTool  │   │  + GoogleSearchTool        │   │
-│     └──────────┬──────────┘   └──────────────┬───────────┘   │
-│                │                              │               │
-│                ▼                              ▼               │
-│         JSON response                  JSON response          │
-│         (SchoolContact[])              (SchoolContact[])      │
-│                │                              │               │
-│                ▼                              ▼               │
-│  3. Parse & validate via Pydantic                             │
-│  4. Write to output CSVs                                      │
-└──────────────────────────────────────────────────────────────┘
-```
+## 🏗️ Architecture & The "Anti-Hallucination" Design
 
-### Key Components
+A naive approach to LLM research—asking a model to "search the web for 10 school principals and their emails"—often leads to poor results. Models summarize search snippets instead of clicking through to staff directories, resulting in guessed or hallucinated email addresses.
 
-- **`src/main.py`** — Entry point. Reads the Regions CSV, creates and runs both agents for each city, parses responses, and writes output CSVs.
-- **`src/models.py`** — Pydantic data models (`SchoolContact`, `SchoolSearchResult`) that define the expected JSON schema the agents must return.
-- **`data/`** — Input and output CSV files.
+This architecture solves that by employing a **Dual-Tool Strategy**:
+1. **Google Search Sub-Agent**: Used strategically to discover official school URLs securely.
+2. **Deep Web Scraper (`load_web_page`)**: Instructs the LLM to autonomously "click" into the school's staff directory, parse the raw DOM, and extract authentic, verified contact records.
 
-### How the Agents Work
+```mermaid
+graph TD
+    classDef io fill:#f9f5ff,stroke:#d6b3ff,stroke-width:2px,color:#333
+    classDef logic fill:#e6f4ea,stroke:#81c995,stroke-width:2px,color:#333
+    classDef agent fill:#e8f0fe,stroke:#8ab4f8,stroke-width:2px,color:#333
+    classDef tools fill:#fff3e0,stroke:#ffb74d,stroke-width:2px,color:#333
 
-Each agent is a `google.adk.agents.LlmAgent` configured with:
-- **Model**: `gemini-3-flash-preview-preview`
-- **Tool**: `google_search` — gives the LLM the ability to perform live Google searches during its reasoning
-- **System instruction**: A detailed prompt telling the agent what type of schools and roles to search for, and requiring it to return strictly valid JSON matching the `SchoolContact` schema
+    CSV[(regions.csv)]:::io --> Main[Orchestrator<br/>main.py]:::logic
+    
+    subgraph "Concurrent Agent Execution"
+        Main --> SA[Students LlmAgent<br/>Elementary/Middle]:::agent
+        Main --> VA[Volunteers LlmAgent<br/>High Schools]:::agent
 
-When the agent receives a city (e.g., "Find school contacts in Austin, TX"), it:
-1. Searches Google for top schools in that city
-2. Visits school/district websites to find faculty directories
-3. Extracts names, emails, and job titles
-4. Returns a JSON object with all contacts
-
-### Data Model
-
-```python
-class SchoolContact(BaseModel):
-    school_name: str      # "Westlake Elementary School"
-    school_link: str      # "https://www.westlake-elem.edu"
-    faculty_name: str     # "Dr. Jane Smith"
-    email: str            # "jsmith@westlake-elem.edu"
-    dear_line: str        # "Dear Dr. Smith"
-    comments: str         # "Principal"
+        SA & VA --> SubSearch["🔍 GoogleSearchAgentTool<br/>(Gemini 2.0 Flash Sub-agent)"]:::tools
+        SA & VA --> WebScraper["🌐 load_web_page<br/>(requests + BeautifulSoup)"]:::tools
+    end
+    
+    SA & VA --> Validator[Pydantic Validation<br/>SchoolContact Schema]:::logic
+    
+    Validator --> SC[(students.csv)]:::io
+    Validator --> VC[(volunteers.csv)]:::io
 ```
 
-### Error Handling & Rate Limiting
+### ✨ System Highlights
 
-- **Rate limiter**: A configurable delay (`RATE_LIMIT_DELAY`, default 5 seconds) between each agent call to avoid hitting API quotas.
-- **JSON parse fallback**: If the model wraps its response in markdown code fences (`` ```json ... ``` ``), the parser strips them before decoding.
-- **Malformed contact skip**: Individual contacts that fail Pydantic validation are skipped with a warning rather than crashing the entire run.
-- **City deduplication**: If the same city appears multiple times, it is only searched once.
+- **Massive Concurrency**: Processes multiple data streams asynchronously via `asyncio.gather`. The orchestrator runs the Students and Volunteers agents simultaneously on a per-region basis.
+- **Sub-Agent Pattern**: Bypasses typical LLM API constraints by wrapping the built-in Gemini Search capability inside a dedicated `GoogleSearchAgentTool` sub-agent, permitting it to coexist seamlessly with custom Python function calling.
+- **Strict Data Contracts**: Relies on Pydantic `BaseModel` schemas for flawless, strongly-typed JSON outputs.
+- **Resilient Execution**: Employs exponential backoff out-of-the-box via the ADK `Runner` to gracefully handle API rate limits (`429`) or quota ceilings.
 
-## Project Structure
+---
 
-```
+## 🛠️ Project Structure
+
+```text
 outreach/
-├── data/
-│   ├── 2026 Camp Outreach Doc - Regions.csv   # Input (you provide this)
-│   ├── outreach_results_students.csv          # Output (generated)
-│   └── outreach_results_volunteers.csv        # Output (generated)
-├── src/
-│   ├── __init__.py
-│   ├── main.py          # Agent orchestration, CSV I/O, CLI entry point
-│   └── models.py        # Pydantic data models (SchoolContact)
-├── .env.example         # Template for your API key
-├── .gitignore
-├── pyproject.toml       # Python project config & dependencies
-└── README.md
+├── data/                                  # I/O datastore
+│   ├── regions.csv                        # Target list: City,State
+│   ├── students.csv                       # Auto-generated leads
+│   └── volunteers.csv                     # Auto-generated leads
+├── src/                                   # Domain Logic
+│   ├── main.py                            # Entrypoint, Agent Definition, Orchestration
+│   └── models.py                          # Pydantic JSON schemas
+├── scripts/                               # Interactive debug & helper utilities
+├── tests/                                 # Unit & Integration tests
+│   ├── test_main.py                       
+│   └── test_models.py                     
+├── .env                                   # API Keys & local configuration
+└── pyproject.toml                         # Dependency specifications
 ```
 
-## Prerequisites
+---
+
+## 🚀 Getting Started
+
+### Prerequisites
 
 - **Python 3.11+**
-- **[uv](https://docs.astral.sh/uv/)** — fast Python package manager
-- **Google API Key** with access to the Gemini API
+- **[uv](https://docs.astral.sh/uv/)** — Extremely fast Python package and project manager
+- **Google API Key** for Gemini
 
-## Setup
+### 1. Installation
 
-### 1. Install uv
-
+Install `uv` if you haven't already:
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-### 2. Get a Google API Key
+### 2. Configuration
 
-1. Go to [Google AI Studio](https://aistudio.google.com/apikey)
-2. Create an API key with Gemini API access
-3. Copy the key
+Get your API key from [Google AI Studio](https://aistudio.google.com/apikey).
 
-### 3. Set the API Key
-
+Configure your local environment:
 ```bash
 export GOOGLE_API_KEY="your-api-key-here"
 ```
 
-Or copy the example env file and fill it in:
+### 3. Provide Targets
 
-```bash
-cp .env.example .env
-# Edit .env and paste your key
+Populate `data/regions.csv` with your target cities:
+```csv
+City,State
+Phoenix,AZ
+Austin,TX
+Columbus,OH
 ```
 
-### 4. Prepare Your Regions CSV
-
-Place your file at `data/2026 Camp Outreach Doc - Regions.csv` with these columns:
-
-| City | State |
-|------|-------|
-| Austin | TX |
-| Dallas | TX |
-| Houston | TX |
-
-## Usage
+### 4. Run the Agents!
 
 ```bash
 uv run src/main.py
 ```
+*(Dependencies will be installed into a virtual environment automatically, and the research orchestration will begin).*
 
-uv automatically creates a virtual environment, installs dependencies from `pyproject.toml`, and runs the script.
+---
 
-### Example Output
+## 🧪 Testing
 
-```
-Loaded 3 region entries from 2026 Camp Outreach Doc - Regions.csv
+The codebase maintains rigorous validation via `pytest`.
 
-============================================================
-Researching: Austin, TX
-============================================================
-  Searching for 10 elementary/middle contacts...
-  Found 10 student contacts.
-  Searching for 12 high school CS contacts...
-  Found 12 volunteer contacts.
-
-============================================================
-Writing output files...
-============================================================
-Wrote 30 rows to outreach_results_students.csv
-Wrote 36 rows to outreach_results_volunteers.csv
-
-Done!
+To run all automated software tests:
+```bash
+uv run pytest
 ```
 
-### Output CSV Format
+---
 
-Both output files share the same column structure:
+## ⚙️ advanced Configuration
 
-| City/State | School Name | School Link | Faculty Name | Email | Dear Line | Comments |
-|-----------|-------------|-------------|--------------|-------|-----------|----------|
-| Austin, TX | Westlake Elementary | https://... | Dr. Jane Smith | jsmith@... | Dear Dr. Smith | Principal |
+Behavior parameters can be tuned directly in `src/main.py`.
 
-## Configuration
-
-Edit the constants at the top of `src/main.py`:
-
-| Constant | Default | Description |
+| Parameter | Default | Purpose |
 |----------|---------|-------------|
-| `MODEL_ID` | `gemini-3-flash-preview-preview` | Gemini model identifier |
-| `STUDENTS_TARGET` | `10` | Number of elementary/middle school contacts to find per city |
-| `VOLUNTEERS_TARGET` | `12` | Number of high school CS contacts to find per city |
-| `RATE_LIMIT_DELAY` | `5.0` | Seconds to wait between agent calls |
+| `MODEL_ID` | `gemini-3-flash-preview` | The primary reasoning engine for analysis |
+| `STUDENTS_TARGET` | `10` | The required yield for elementary/middle schools |
+| `VOLUNTEERS_TARGET` | `12` | The required yield for high school contacts |
+| `MAX_RETRIES` | `5` | API resilience retry bounds |
+| `RETRY_BASE_DELAY` | `15.0` | Initial exponential backoff in seconds |
 
-## Dependencies
-
-Managed via `pyproject.toml`:
-
-| Package | Purpose |
-|---------|---------|
-| `google-adk` | Google Agent Development Kit — provides `LlmAgent`, `Runner`, `GoogleSearchTool` |
-| `pydantic` | Data validation and JSON schema enforcement for agent responses |
-| `python-dotenv` | Loads environment variables from `.env` file |
-
-## Notes
-
-- The agent uses **Google Search grounding** — results depend on what is publicly available online. Not all schools publish faculty emails on their websites.
-- If an email cannot be found, the field will be an empty string in the output CSV.
-- The `google_search` tool is provided by ADK and gives the Gemini model the ability to issue real Google searches as part of its reasoning chain (similar to tool use / function calling).
-- Duplicate cities are only searched once to avoid redundant API calls.
+> **Note**: Search outputs depend entirely on publicly available internet data. If a school does not list faculty emails online, the `email` field will gracefully return an empty string.

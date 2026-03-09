@@ -3,7 +3,15 @@ name = "outreach"
 version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = [
+    "beautifulsoup4>=4.14.3",
     "google-adk",
+    "lxml>=6.0.2",
     "pydantic",
     "python-dotenv",
+    "requests>=2.32.5",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
 ]

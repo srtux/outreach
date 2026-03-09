@@ -17,26 +17,29 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 from google.adk.agents import LlmAgent
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
-from google.adk.tools import google_search
+from google.adk.tools.google_search_agent_tool import create_google_search_agent, GoogleSearchAgentTool
+from google.adk.tools.load_web_page import load_web_page
 from google.genai import types
 
-from models import SchoolContact
+# Add project root to sys.path to allow 'src' package imports when running as a script
+if __name__ == "__main__" and not __package__:
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from src.models import SchoolContact
 
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
-REGIONS_CSV = DATA_DIR / "2026 Camp Outreach Doc - Regions.csv"
-OUTPUT_STUDENTS = DATA_DIR / "outreach_results_students.csv"
-OUTPUT_VOLUNTEERS = DATA_DIR / "outreach_results_volunteers.csv"
+REGIONS_CSV = DATA_DIR / "regions.csv"
+OUTPUT_STUDENTS = DATA_DIR / "students.csv"
+OUTPUT_VOLUNTEERS = DATA_DIR / "volunteers.csv"
 
 MODEL_ID = "gemini-3-flash-preview"
 
 STUDENTS_TARGET = 10  # elementary/middle school contacts per city
 VOLUNTEERS_TARGET = 12  # high school CS contacts per city
 
-# Rate-limiting: seconds to wait between agent calls
-RATE_LIMIT_DELAY = 5.0
 
 # Retry settings for 429 rate-limit errors
 MAX_RETRIES = 5
@@ -60,11 +63,11 @@ STUDENTS_SYSTEM_PROMPT = """\
 You are a research assistant that finds elementary and middle school contacts \
 for a coding camp outreach program.
 
-Given a city and state, use Google Search to:
-1. Find the top {target} elementary and middle schools in that area.
-2. For each school, search for a faculty contact — preferably the Principal, \
-Vice-Principal, STEM Coordinator, or Technology Teacher.
-3. Try to find their professional email address on the school or district website.
+Given a city and state:
+1. Use the `google_search_agent` tool to find the top {target} elementary and middle schools in that area.
+2. For each school, find a faculty contact — preferably the Principal, Vice-Principal, STEM Coordinator, or Technology Teacher.
+3. CRITICAL: Do NOT guess or hallucinate email addresses. You MUST use the `load_web_page` tool to browse the school's or district's "Staff", "Directory", or "About Us" page.
+4. Extract their precise professional email address from the page text.
 
 Return your results as strictly valid JSON matching this schema:
 {{
@@ -82,7 +85,7 @@ Return your results as strictly valid JSON matching this schema:
 
 IMPORTANT RULES:
 - Return ONLY the raw JSON object. No markdown, no code fences, no commentary.
-- If you cannot find an email, leave the field as an empty string.
+- If you use `load_web_page` and cannot find an email, leave the field as an empty string. Never make up an email address.
 - Always include the school website URL in school_link if available.
 - Target exactly {target} contacts.
 """
@@ -91,11 +94,11 @@ VOLUNTEERS_SYSTEM_PROMPT = """\
 You are a research assistant that finds high school Computer Science teacher \
 contacts for a coding camp volunteer recruitment program.
 
-Given a city and state, use Google Search to:
-1. Find the top {target} high schools in that area.
-2. For each school, search for a CS/Computer Science teacher, Robotics coach, \
-Technology instructor, or CTE (Career and Technical Education) coordinator.
-3. Try to find their professional email address on the school or district website.
+Given a city and state:
+1. Use the `google_search_agent` tool to find the top {target} high schools in that area.
+2. For each school, find a CS/Computer Science teacher, Robotics coach, Technology instructor, or CTE (Career and Technical Education) coordinator.
+3. CRITICAL: Do NOT guess or hallucinate email addresses. You MUST use the `load_web_page` tool to browse the school's or district's "Staff", "Directory", or "About Us" page.
+4. Extract their precise professional email address from the page text.
 
 Return your results as strictly valid JSON matching this schema:
 {{
@@ -113,7 +116,7 @@ Return your results as strictly valid JSON matching this schema:
 
 IMPORTANT RULES:
 - Return ONLY the raw JSON object. No markdown, no code fences, no commentary.
-- If you cannot find an email, leave the field as an empty string.
+- If you use `load_web_page` and cannot find an email, leave the field as an empty string. Never make up an email address.
 - Always include the school website URL in school_link if available.
 - Target exactly {target} contacts.
 """
@@ -131,11 +134,14 @@ def build_agent(agent_type: str) -> LlmAgent:
         instruction = VOLUNTEERS_SYSTEM_PROMPT.format(target=VOLUNTEERS_TARGET)
         name = "volunteers_researcher"
 
+    search_agent = create_google_search_agent("gemini-2.0-flash")
+    search_agent_tool = GoogleSearchAgentTool(agent=search_agent)
+
     return LlmAgent(
         name=name,
         model=MODEL_ID,
         instruction=instruction,
-        tools=[google_search],
+        tools=[search_agent_tool, load_web_page],
     )
 
 
@@ -145,19 +151,37 @@ def build_agent(agent_type: str) -> LlmAgent:
 
 def parse_agent_response(text: str) -> list[SchoolContact]:
     """Parse the agent's JSON response into a list of SchoolContact."""
-    # Strip markdown code fences if the model wraps them despite instructions
-    cleaned = text.strip()
-    if cleaned.startswith("```"):
-        first_newline = cleaned.index("\n")
-        cleaned = cleaned[first_newline + 1 :]
-    if cleaned.endswith("```"):
-        cleaned = cleaned[: cleaned.rfind("```")]
-    cleaned = cleaned.strip()
+    import re
+    # 1. Try to extract from markdown fences
+    match = re.search(r"```(?:json)?\s*(.*?)\s*```", text, re.DOTALL)
+    if match:
+        cleaned = match.group(1).strip()
+    else:
+        # 2. Try to find the first '{' and last '}' (for dict)
+        start_dict = text.find('{')
+        end_dict = text.rfind('}')
+        # 3. Try to find the first '[' and last ']' (for list)
+        start_list = text.find('[')
+        end_list = text.rfind(']')
+
+        # Determine which one appears first and is larger
+        if start_dict != -1 and (start_list == -1 or start_dict < start_list):
+            cleaned = text[start_dict : end_dict + 1]
+        elif start_list != -1:
+            cleaned = text[start_list : end_list + 1]
+        else:
+            cleaned = text.strip()
+
+    if not cleaned:
+        return []
 
     try:
         data = json.loads(cleaned)
     except json.JSONDecodeError:
         print(f"  [WARN] Could not parse JSON from agent response. Skipping.")
+        # Logging first 100 chars for debugging
+        snippet = (text[:100] + '...') if len(text) > 100 else text
+        print(f"  [DEBUG] Response snippet: {repr(snippet)}")
         return []
 
     # Handle both {"contacts": [...]} and bare [...]
@@ -186,7 +210,7 @@ async def _run_agent_once(
 ) -> list[SchoolContact]:
     """Single attempt to run the agent for a city."""
     session = await session_service.create_session(
-        app_name="outreach", user_id="user"
+        app_name=runner.app_name, user_id="user"
     )
 
     user_msg = types.Content(
@@ -194,18 +218,44 @@ async def _run_agent_once(
         parts=[types.Part(text=f"Find school contacts in {city}, {state}.")],
     )
 
+    agent_icon = "🎓" if "student" in runner.agent.name else "🤝"
+    agent_label = f"{agent_icon} {runner.agent.name.replace('_researcher', '').title():<10}"
+    
     collected_text = ""
+    print(f"  {agent_label} | 🚀 Starting research...")
+    
     async for event in runner.run_async(
         user_id="user",
         session_id=session.id,
         new_message=user_msg,
     ):
+        if hasattr(event, "get_function_calls"):
+            for call in event.get_function_calls():
+                args = call.args or {}
+                if "search" in call.name.lower():
+                    query = args.get("query", args.get("q", args.get("request", "unknown query")))
+                    print(f"  {agent_label} | 🔍 Searching Google: '{query}'")
+                elif "load" in call.name.lower() or "page" in call.name.lower():
+                    url = args.get("url", "unknown url")
+                    print(f"  {agent_label} | 🌐 Scraping website: {url}")
+                else:
+                    print(f"  {agent_label} | 🛠️ Using tool: {call.name}")
+
         if event.content and event.content.parts:
             for part in event.content.parts:
                 if part.text:
                     collected_text += part.text
 
-    return parse_agent_response(collected_text)
+    contacts = parse_agent_response(collected_text)
+    if contacts:
+        print(f"\n  {agent_label} | ✅ Successfully found {len(contacts)} contacts for {city}, {state}:")
+        for c in contacts:
+            print(f"     ➔ 🏫 {c.school_name}")
+            print(f"        👤 {c.faculty_name}  |  💼 {c.comments or 'No title'}")
+            print(f"        📧 {c.email or 'No email found'}")
+        print()
+            
+    return contacts
 
 
 async def search_city(
@@ -245,16 +295,20 @@ def read_regions(csv_path: Path) -> list[dict]:
     return rows
 
 
-def write_output_csv(
+def append_output_csv(
     path: Path,
     rows: list[dict],
 ) -> None:
-    """Write the final output CSV."""
-    with open(path, "w", newline="", encoding="utf-8") as f:
+    """Append rows to the output CSV."""
+    if not rows:
+        return
+    file_exists = path.exists()
+    with open(path, "a", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=OUTPUT_COLUMNS)
-        writer.writeheader()
+        if not file_exists or path.stat().st_size == 0:
+            writer.writeheader()
         writer.writerows(rows)
-    print(f"Wrote {len(rows)} rows to {path.name}")
+    print(f"Appended {len(rows)} rows to {path.name}")
 
 
 def contact_to_row(
@@ -310,13 +364,27 @@ async def main() -> None:
         session_service=session_service,
     )
 
-    student_rows: list[dict] = []
-    volunteer_rows: list[dict] = []
-
     # Deduplicate cities
     seen_cities: set[str] = set()
 
+    for path in [OUTPUT_STUDENTS, OUTPUT_VOLUNTEERS]:
+        if path.exists():
+            try:
+                with open(path, "r", newline="", encoding="utf-8") as f:
+                    reader = csv.DictReader(f)
+                    for row in reader:
+                        cs = row.get("City/State", "")
+                        if cs:
+                            parts = [p.strip() for p in cs.split(",", 1)]
+                            if len(parts) == 2:
+                                seen_cities.add(f"{parts[0]}|{parts[1]}")
+            except Exception as e:
+                print(f"[WARN] Error reading {path.name}: {e}")
+
     for region in regions:
+        student_rows: list[dict] = []
+        volunteer_rows: list[dict] = []
+
         city = region.get("City", "").strip()
         state = region.get("State", "").strip()
 
@@ -330,53 +398,43 @@ async def main() -> None:
             continue
         seen_cities.add(city_key)
 
-        print(f"\n{'='*60}")
-        print(f"Researching: {city}, {state}")
-        print(f"{'='*60}")
+        print(f"\n" + "━"*70)
+        print(f" 📍 RESEARCHING LOCATION: {city}, {state} ".center(70, "━"))
+        print(f"━"*70)
 
-        # --- Students search ---
-        print(f"  Searching for {STUDENTS_TARGET} elementary/middle contacts...")
-        try:
-            student_contacts = await search_city(
-                students_runner,
-                city,
-                state,
-                session_service,
-            )
-            print(f"  Found {len(student_contacts)} student contacts.")
-            for c in student_contacts:
+        # --- Concurrent Search ---
+        print(f"\n🎯 Target: {STUDENTS_TARGET} elementary/middle contacts and {VOLUNTEERS_TARGET} high school CS contacts")
+        print(f"⚡ Running agents concurrently...\n")
+        
+        results = await asyncio.gather(
+            search_city(students_runner, city, state, session_service),
+            search_city(volunteers_runner, city, state, session_service),
+            return_exceptions=True
+        )
+
+        # Process Students
+        student_res = results[0]
+        if isinstance(student_res, Exception):
+            print(f"  ❌ [ERROR] Students search failed for {city}, {state}: {student_res}")
+        else:
+            for c in student_res:
                 student_rows.append(contact_to_row(c, city, state))
-        except Exception as e:
-            print(f"  [ERROR] Students search failed for {city}, {state}: {e}")
 
-        # Rate limit
-        await asyncio.sleep(RATE_LIMIT_DELAY)
-
-        # --- Volunteers search ---
-        print(f"  Searching for {VOLUNTEERS_TARGET} high school CS contacts...")
-        try:
-            volunteer_contacts = await search_city(
-                volunteers_runner,
-                city,
-                state,
-                session_service,
-            )
-            print(f"  Found {len(volunteer_contacts)} volunteer contacts.")
-            for c in volunteer_contacts:
+        # Process Volunteers
+        volunteer_res = results[1]
+        if isinstance(volunteer_res, Exception):
+            print(f"  ❌ [ERROR] Volunteers search failed for {city}, {state}: {volunteer_res}")
+        else:
+            for c in volunteer_res:
                 volunteer_rows.append(contact_to_row(c, city, state))
-        except Exception as e:
-            print(f"  [ERROR] Volunteers search failed for {city}, {state}: {e}")
 
-        # Rate limit between cities
-        await asyncio.sleep(RATE_LIMIT_DELAY)
+        append_output_csv(OUTPUT_STUDENTS, student_rows)
+        append_output_csv(OUTPUT_VOLUNTEERS, volunteer_rows)
 
     # Write outputs
-    print(f"\n{'='*60}")
-    print("Writing output files...")
-    print(f"{'='*60}")
-    write_output_csv(OUTPUT_STUDENTS, student_rows)
-    write_output_csv(OUTPUT_VOLUNTEERS, volunteer_rows)
-    print("\nDone!")
+    print(f"\n" + "━"*70)
+    print(f"🎉 All regions processed successfully!".center(70))
+    print(f"━"*70 + "\n")
 
 
 if __name__ == "__main__":

@@ -1,5 +1,21 @@
-.env
+# Python bytecode
 __pycache__/
-*.pyc
+*.py[cod]
+
+# Environments
+.env
 .venv/
-venv/
+
+# Tests
+.pytest_cache/
+
+# OS Specific
+.DS_Store
+
+# Data
+data/*.csv
+!data/regions.csv
+
+# Scripts
+debug_*.py
+*.log

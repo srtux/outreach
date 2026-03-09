@@ -1,6 +1,6 @@
 # 02: Architecture and Concurrency
 
-Now that you know what an agent is, let's look at how this specific project is architected. We use two advanced patterns here: **Dual-Tool Strategy** to prevent hallucinations, and **Concurrency** to make the script run fast.
+Now that you know what an agent is, let's look at how this specific project is architected. We use three advanced patterns here: **Dual-Tool Strategy** to prevent hallucinations, **Concurrency** to make the script run fast, and **Object-Oriented Design (OOP)** to efficiently manage application state.
 
 ## The Dual-Tool Strategy
 
@@ -67,6 +67,10 @@ While Agent 1 is waiting for Google to respond, `asyncio` automatically flips ov
 However, if we try to query the Google API with 100 agents at the exact same millisecond, Google will block us (this is called a Rate Limit, or `429 Too Many Requests`). 
 
 To prevent this, we use a `Semaphore`. Think of a semaphore as a bouncer at a club. If our `MAX_CONCURRENT_CITIES` is set to 3, the semaphore only lets 3 cities process at a time. The 4th city must wait in line until one of the first 3 finishes.
+
+### Object-Oriented State Management
+
+To keep our code clean while running all these concurrent tasks, we use a central `ResearchApp` object. This acts as a single container holding our semaphore, API sessions, and database connections (`CsvRepository`). Instead of passing 10 different variables into every function, we just pass the `ResearchApp` context!
 
 ---
 **Next up:** Let's dive into the code itself to see how this all connects in [03: Code Walkthrough](./03_code_walkthrough.md).

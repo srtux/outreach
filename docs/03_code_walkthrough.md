@@ -1,6 +1,6 @@
 # 03: Code Walkthrough
 
-This guide walks you through `outreach/main.py`, focusing on the core logic: the ADK `Runner` streaming events, the data parser extracting structured JSON, and the retry loops.
+This guide walks you through the core logic of the application, focusing on `outreach/main.py` (orchestration) and `outreach/search.py` (the ADK `Runner` streaming events, the data parser, and the retry loops).
 
 ## The Overall Flow
 
@@ -10,7 +10,7 @@ At a high level, the `main()` function:
 3. Checks output files to evaluate previous progress against minimum thresholds (`MIN_SCHOOLS_TARGET`, `MIN_CONTACTS_TARGET`). If the city satisfies both, it skips it.
 4. Uses `asyncio.gather` to launch tasks for all pending cities concurrently, gated by a `Semaphore` so we don't overwhelm Google.
 
-## How the ADK `Runner` Works (`_run_agent_once`)
+## How the ADK `Runner` Works (`outreach/search.py`)
 
 When we process a city, we call `_run_agent_once()`. This is where the ADK does the heavy lifting. We construct a plain English prompt like `"Find school contacts in Austin, TX"`, package it as a `user_msg`, and feed it to the `Runner`. 
 
@@ -53,7 +53,7 @@ By running `json-repair` on the partial text array, we can detect the exact mome
 
 ## Structured Output via `output_schema`
 
-Because we define an `output_schema` (the `SchoolSearchResult` Pydantic model) when building our agent in `outreach/main.py`, the Google ADK ensures that the LLM's final response is **pure valid JSON**. 
+Because we define an `output_schema` (the `SchoolSearchResult` Pydantic model) when building our agent in `outreach/agents.py`, the Google ADK ensures that the LLM's final response is **pure valid JSON**. 
 
 Unlike older LLM patterns where you might get conversational "noise" (like "Here is your JSON:"), the Gemini model uses constrained decoding to strictly output only the fields defined in our model. 
 

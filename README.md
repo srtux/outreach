@@ -57,6 +57,8 @@ graph TD
 ### ✨ System Highlights
 
 - **Massive Concurrency**: Processes multiple data streams asynchronously via `asyncio.gather`. The orchestrator runs the Students and Volunteers agents simultaneously on a per-region basis.
+- **Unified Context (`ResearchApp`)**: Global dependencies like semaphores, API sessions, and LLM Runners are managed efficiently in a dedicated context dataclass to eliminate argument bloat across concurrent tasks.
+- **Encapsulated I/O (`CsvRepository`)**: Safely handles asynchronous file writing and duplication checks using internal locking mechanisms, protecting the integrity of the data stream.
 - **Sub-Agent Pattern**: Bypasses typical LLM API constraints by wrapping the built-in Gemini Search capability inside a dedicated `GoogleSearchAgentTool` sub-agent, permitting it to coexist seamlessly with custom Python function calling.
 - **Strict Data Contracts**: Relies on `json-repair` and Pydantic `BaseModel` schemas for flawless, strongly-typed JSON outputs.
 - **Progress Monitoring**: New compact logging UI that tracks per-city progress directly in the terminal (`🎓 Stud. | Seattle, WA | 0/20`), with intelligent truncation of long URLs and search queries.
@@ -95,8 +97,13 @@ outreach/
 │   ├── students.csv                       # Auto-generated leads
 │   └── volunteers.csv                     # Auto-generated leads
 ├── outreach/                              # Domain Logic (Source Package)
-│   ├── main.py                            # Entrypoint, Agent Definition, Orchestration
-│   └── models.py                          # Pydantic JSON schemas
+│   ├── main.py                            # Entrypoint, Orchestration, ResearchApp Context
+│   ├── search.py                          # Core LLM processing and rate-limit retries
+│   ├── agents.py                          # Agent and Tool instantiation
+│   ├── io.py                              # Encapsulated CSV I/O (CsvRepository)
+│   ├── models.py                          # Pydantic JSON schemas
+│   ├── prompts.py                         # LLM System Prompts
+│   └── config.py                          # Environment and global configuration
 ├── tests/                                 # Unit & Integration tests
 │   ├── test_main.py                       
 │   └── test_models.py                     

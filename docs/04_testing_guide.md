@@ -12,9 +12,9 @@ Because our main script uses `async` (concurrent tasks), normal synchronous func
 ## The Magic of Mocking
 Mocking is a technique where you replace a real object or network class with a "fake" clone that you have pre-programmed to act a certain way. This is required to test things like an Exponential Backoff retry loop without actually freezing the program for 120 seconds. 
 
-### Patching the API (`test_main.py`)
+### Patching the API (`test_search.py`)
 
-If we look at `test_search_city_rate_limit_retry()`, here is how it works:
+If we look at `test_search_city_rate_limit_retry()` inside `tests/test_search.py`, here is how it works:
 
 ```python
 @pytest.mark.asyncio
@@ -25,7 +25,7 @@ async def test_search_city_rate_limit_retry():
     contact = SchoolContact(school_name="S1", faculty_name="F1")
     
     # 2. "Patching" hijacks the actual imports during the test run
-    with patch("outreach.main._run_agent_once", new_callable=AsyncMock) as mock_run, \
+    with patch("outreach.search._run_agent_once", new_callable=AsyncMock) as mock_run, \
          patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
         
         # 3. We forcibly order the mock to crash with a 429 on the first try, 
@@ -33,7 +33,7 @@ async def test_search_city_rate_limit_retry():
         mock_run.side_effect = [Exception("429 Too Many Requests"), [contact]]
         
         # 4. We run the actual function we want to test
-        result = await search_city(runner, "Austin", "TX", session_service)
+        result = await search_city(runner, "Austin", "TX", session_service, MagicMock(), MagicMock())
         
         # 5. We verify the outcome!
         assert len(result) == 1
@@ -42,6 +42,14 @@ async def test_search_city_rate_limit_retry():
 ```
 
 This pattern guarantees that our exponential backoff works precisely as defined, handling the 429 exception without crashing the app, delaying execution, and eventually yielding a correct result, all tested instantly without relying on the network!
+
+## Modular Test Suite
+As the application grows, keeping all tests in `test_main.py` becomes disorganized. We split our tests into multiple files that mirror the application's structure:
+- `test_io.py`: Tests reading and writing CSVs (`CsvRepository`).
+- `test_agents.py`: Tests the agent factory (`build_agent`).
+- `test_search.py`: Tests the LLM response parsing and retry loops.
+- `test_main.py`: Tests the orchestration and concurrency.
+- `test_models.py`: Tests the Pydantic data schemas.
 
 ## Running the Coverage Suite
 

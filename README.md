@@ -18,8 +18,8 @@ By providing a list of target cities, the tool dispatches concurrent AI research
 
 | Agent | Target Audience | Target Roles | Yield per City |
 |-------|---------------|-------------|----------------|
-| **Students** | Elementary & Middle Schools | Principal, Vice-Principal, STEM Coordinator | Up to 20 contacts |
-| **Volunteers** | High Schools | CS Teacher, Robotics Coach, CTE Coordinator | Up to 20 contacts |
+| **Students** | Elementary & Middle Schools | Principal, Vice-Principal, STEM Coordinator | Up to 200 contacts |
+| **Volunteers** | High Schools | CS Teacher, Robotics Coach, CTE Coordinator | Up to 200 contacts |
 
 ---
 
@@ -61,7 +61,7 @@ graph TD
 - **Encapsulated I/O (`CsvRepository`)**: Safely handles asynchronous file writing and duplication checks using internal locking mechanisms, protecting the integrity of the data stream.
 - **Sub-Agent Pattern**: Bypasses typical LLM API constraints by wrapping the built-in Gemini Search capability inside a dedicated `GoogleSearchAgentTool` sub-agent, permitting it to coexist seamlessly with custom Python function calling.
 - **Strict Data Contracts**: Relies on `json-repair` and Pydantic `BaseModel` schemas for flawless, strongly-typed JSON outputs.
-- **Progress Monitoring**: New compact logging UI that tracks per-city progress directly in the terminal (`🎓 Stud. | Seattle, WA | 0/20`), with intelligent truncation of long URLs and search queries.
+- **Progress Monitoring**: New compact logging UI that tracks per-city progress directly in the terminal (`🎓 Stud. | Seattle, WA | 0/200`), with intelligent truncation of long URLs and search queries.
 - **Resilient Execution**: Employs exponential backoff out-of-the-box to gracefully handle API rate limits (`429`) or quota ceilings. Its non-blocking semaphore ensures the entire pipeline doesn't stall during individual rate-limit waits.
 - **Deduplication & Resumption**: Automatically reads existing CSV outputs to deduplicate schools across multiple runs. It intelligently skips already researched schools and retries schools with missing contacts.
 
@@ -110,6 +110,8 @@ outreach/
 │   ├── test_main.py                       # Orchestration tests
 │   ├── test_models.py                     # Pydantic validation tests
 │   └── test_search.py                     # Agent execution, parsing, retry tests
+├── scripts/
+│   └── generate_regions.py                # Scrapes 387 MSAs from Wikipedia
 ├── docs/                                  # Learner's guide
 ├── .env.example                           # Environment variable template
 └── pyproject.toml                         # Dependency specifications
@@ -143,12 +145,10 @@ export GOOGLE_API_KEY="your-api-key-here"
 
 ### 3. Provide Targets
 
-Populate `data/regions.csv` with your target cities:
-```csv
-City,State
-Phoenix,AZ
-Austin,TX
-Columbus,OH
+Populate `data/regions.csv` with your target cities. The included `regions.csv` is pre-populated with **387** US Metropolitan Statistical Areas (MSAs). 
+To regenerate or update the list from Wikipedia, run:
+```bash
+uv run python scripts/generate_regions.py
 ```
 
 ### 4. Run the Agents!
@@ -180,8 +180,8 @@ Behavior parameters can be tuned directly via `.env` files or system environment
 |----------|---------|-------------|
 | `MODEL_ID` | `gemini-3-flash-preview` | The primary reasoning engine for analysis |
 | `MAX_CONCURRENT_AGENTS` | `15` | The number of agents executed simultaneously. Controls rate limiting. |
-| `MIN_SCHOOLS_TARGET` | `3` | The minimum required unique schools per city. |
-| `MIN_CONTACTS_TARGET` | `20` | The required total aggregate yield of contacts for the city. |
+| `MIN_SCHOOLS_TARGET` | `200` | The minimum required unique schools per city. |
+| `MIN_CONTACTS_TARGET` | `200` | The required total aggregate yield of contacts for the city. |
 | `STUDENTS_TARGET` | `MIN_CONTACTS_TARGET` | Text injected into the elementary prompt for behavioral guidance. |
 | `VOLUNTEERS_TARGET` | `MIN_CONTACTS_TARGET` | Text injected into the high school prompt for behavioral guidance. |
 

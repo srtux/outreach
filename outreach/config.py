@@ -13,12 +13,12 @@ OUTPUT_VOLUNTEERS = DATA_DIR / "volunteers.csv"
 
 MODEL_ID = os.environ.get("MODEL_ID", "gemini-3-flash-preview")
 
-MIN_SCHOOLS_TARGET = int(os.environ.get("MIN_SCHOOLS_TARGET", "3"))
-MIN_CONTACTS_TARGET = int(os.environ.get("MIN_CONTACTS_TARGET", "20"))
+MIN_SCHOOLS_TARGET = int(os.environ.get("MIN_SCHOOLS_TARGET", "200"))
+MIN_CONTACTS_TARGET = int(os.environ.get("MIN_CONTACTS_TARGET", "200"))
 
 # Backwards compatibility / fallbacks (used for prompting the agent)
-STUDENTS_TARGET = int(os.environ.get("STUDENTS_TARGET", str(MIN_CONTACTS_TARGET)))
-VOLUNTEERS_TARGET = int(os.environ.get("VOLUNTEERS_TARGET", str(MIN_CONTACTS_TARGET)))
+STUDENTS_TARGET = int(os.environ.get("STUDENTS_TARGET", str(MIN_SCHOOLS_TARGET)))
+VOLUNTEERS_TARGET = int(os.environ.get("VOLUNTEERS_TARGET", str(MIN_SCHOOLS_TARGET)))
 
 # Retry settings for 429 rate-limit errors
 MAX_RETRIES = 5

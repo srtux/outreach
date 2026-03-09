@@ -1,51 +1,388 @@
 City,State
-New York,NY
-Los Angeles,CA
-Chicago,IL
-Dallas,TX
-Houston,TX
-Washington,DC
-Philadelphia,PA
-Atlanta,GA
-Miami,FL
-Phoenix,AZ
-Boston,MA
-Riverside,CA
-San Francisco,CA
-Detroit,MI
-Seattle,WA
-Minneapolis,MN
-Tampa,FL
-San Diego,CA
-Denver,CO
-Baltimore,MD
+New York–Newark–Jersey City,NY
+Los Angeles–Long Beach–Anaheim,CA
+Chicago–Naperville–Elgin,IL
+Dallas–Fort Worth–Arlington,TX
+Houston–Pasadena–The Woodlands,TX
+Miami–Fort Lauderdale–West Palm Beach,FL
+Washington–Arlington–Alexandria,DC
+Atlanta–Sandy Springs–Roswell,GA
+Philadelphia–Camden–Wilmington,PA
+Phoenix–Mesa–Chandler,AZ
+Boston–Cambridge–Newton,MA
+Riverside–San Bernardino–Ontario,CA
+San Francisco–Oakland–Fremont,CA
+Detroit–Warren–Dearborn,MI
+Seattle–Tacoma–Bellevue,WA
+Minneapolis–St. Paul–Bloomington,MN
+Tampa–St. Petersburg–Clearwater,FL
+San Diego–Chula Vista–Carlsbad,CA
+Denver–Aurora–Centennial,CO
+Orlando–Kissimmee–Sanford,FL
+Charlotte–Concord–Gastonia,NC
+Baltimore–Columbia–Towson,MD
 St. Louis,MO
-Orlando,FL
-Charlotte,NC
-San Antonio,TX
-Portland,OR
-Sacramento,CA
+San Antonio–New Braunfels,TX
+Austin–Round Rock–San Marcos,TX
+Portland–Vancouver–Hillsboro,OR
+Sacramento–Roseville–Folsom,CA
 Pittsburgh,PA
-Austin,TX
-Las Vegas,NV
+Las Vegas–Henderson–North Las Vegas,NV
 Cincinnati,OH
 Kansas City,MO
 Columbus,OH
-Indianapolis,IN
+Indianapolis–Carmel–Greenwood,IN
 Cleveland,OH
-San Jose,CA
 Nashville,TN
-Virginia Beach,VA
-Providence,RI
+San Jose–Sunnyvale–Santa Clara,CA
+Virginia Beach–Norfolk–Newport News,VA
 Jacksonville,FL
-Milwaukee,WI
+Providence–Warwick,RI
+Milwaukee–Waukesha,WI
+Raleigh–Cary,NC
 Oklahoma City,OK
-Raleigh,NC
-Memphis,TN
+Louisville/Jefferson County,KY
 Richmond,VA
-Louisville,KY
-New Orleans,LA
-Salt Lake City,UT
-Hartford,CT
-Buffalo,NY
+Memphis,TN
+Salt Lake City–Murray,UT
 Birmingham,AL
+Fresno,CA
+Grand Rapids–Wyoming–Kentwood,MI
+Hartford–West Hartford–East Hartford,CT
+Buffalo–Cheektowaga,NY
+Tucson,AZ
+Tulsa,OK
+Rochester,NY
+Omaha,NE
+Urban Honolulu,HI
+Greenville–Anderson–Greer,SC
+Bridgeport–Stamford–Danbury,CT
+New Orleans–Metairie,LA
+Knoxville,TN
+North Port–Bradenton–Sarasota,FL
+Albuquerque,NM
+Bakersfield–Delano,CA
+McAllen–Edinburg–Mission,TX
+Albany–Schenectady–Troy,NY
+Allentown–Bethlehem–Easton,PA
+Baton Rouge,LA
+Worcester,MA
+El Paso,TX
+Columbia,SC
+Charleston–North Charleston,SC
+Cape Coral–Fort Myers,FL
+Lakeland–Winter Haven,FL
+Boise City,ID
+Oxnard–Thousand Oaks–Ventura,CA
+Dayton–Kettering–Beavercreek,OH
+Stockton–Lodi,CA
+Greensboro–High Point,NC
+Colorado Springs,CO
+Little Rock–North Little Rock–Conway,AR
+Provo–Orem–Lehi,UT
+Des Moines–West Des Moines,IA
+Deltona–Daytona Beach–Ormond Beach,FL
+Kiryas Joel–Poughkeepsie–Newburgh,NY
+Madison,WI
+Winston,NC
+Akron,OH
+Ogden,UT
+Wichita,KS
+Palm Bay–Melbourne–Titusville,FL
+Syracuse,NY
+Augusta,GA
+Durham–Chapel Hill,NC
+Harrisburg–Carlisle,PA
+Jackson,MS
+Fayetteville–Springdale–Rogers,AR
+Spokane–Spokane Valley,WA
+Toledo,OH
+Chattanooga,TN
+New Haven,CT
+Reno,NV
+Scranton–Wilkes,PA
+Portland–South Portland,ME
+Lancaster,PA
+Modesto,CA
+Port St. Lucie,FL
+Huntsville,AL
+Pensacola–Ferry Pass–Brent,FL
+Lexington,KY
+Killeen–Temple,TX
+Springfield,MO
+Santa Rosa–Petaluma,CA
+Visalia,CA
+Wilmington,NC
+Lansing–East Lansing,MI
+York–Hanover,PA
+Springfield,MA
+Fort Wayne,IN
+Waterbury–Shelton,CT
+Vallejo,CA
+Corpus Christi,TX
+Santa Maria–Santa Barbara,CA
+Salem,OR
+Reading,PA
+Salinas,CA
+Brownsville–Harlingen,TX
+Savannah,GA
+Manchester–Nashua,NH
+Ocala,FL
+Gulfport–Biloxi,MS
+Youngstown–Warren,OH
+Asheville,NC
+Lafayette,LA
+Naples–Marco Island,FL
+Myrtle Beach–Conway–North Myrtle Beach,SC
+Mobile,AL
+Anchorage,AK
+Flint,MI
+Canton–Massillon,OH
+Beaumont–Port Arthur,TX
+Tallahassee,FL
+Spartanburg,SC
+Fayetteville,NC
+Trenton–Princeton,NJ
+Montgomery,AL
+Shreveport–Bossier City,LA
+Eugene–Springfield,OR
+Davenport–Moline–Rock Island,IA
+Fort Collins–Loveland,CO
+Ann Arbor,MI
+Hickory–Lenoir–Morganton,NC
+Atlantic City–Hammonton,NJ
+Greeley,CO
+Lubbock,TX
+Huntington–Ashland,WV
+Peoria,IL
+Gainesville,FL
+Lincoln,NE
+Clarksville,TN
+Rockford,IL
+Green Bay,WI
+Boulder,CO
+South Bend–Mishawaka,IN
+Columbus,GA
+Kennewick–Richland,WA
+Roanoke,VA
+Kingsport–Bristol,TN
+Hagerstown–Martinsburg,MD
+Crestview–Fort Walton Beach–Destin,FL
+Sioux Falls,SD
+Waco,TX
+Olympia–Lacey–Tumwater,WA
+Merced,CA
+Longview,TX
+Utica–Rome,NY
+College Station–Bryan,TX
+Norwich–New London–Willimantic,CT
+Tuscaloosa,AL
+San Luis Obispo–Paso Robles,CA
+Duluth,MN
+Bremerton–Silverdale–Port Orchard,WA
+Cedar Rapids,IA
+Slidell–Mandeville–Covington,LA
+Amarillo,TX
+Laredo,TX
+Evansville,IN
+Fargo,ND
+Erie,PA
+Lynchburg,VA
+Kalamazoo–Portage,MI
+Bend,OR
+Santa Cruz–Watsonville,CA
+Daphne–Fairhope–Foley,AL
+Yakima,WA
+Prescott Valley–Prescott,AZ
+Tyler,TX
+Appleton,WI
+Binghamton,NY
+Lake Charles,LA
+Champaign–Urbana,IL
+Macon,GA
+Hilton Head Island–Bluffton–Port Royal,SC
+Bellingham,WA
+Fort Smith,AR
+Topeka,KS
+Barnstable Town,MA
+Rochester,MN
+Lafayette–West Lafayette,IN
+Burlington–South Burlington,VT
+Las Cruces,NM
+Charlottesville,VA
+Lake Havasu City–Kingman,AZ
+Panama City–Panama City Beach,FL
+Athens,GA
+Monroe,LA
+Gainesville,GA
+Medford,OR
+Yuma,AZ
+Columbia,MO
+Johnson City,TN
+Jacksonville,NC
+Punta Gorda,FL
+Lexington Park,MD
+Chico,CA
+St. George,UT
+Elkhart–Goshen,IN
+Joplin,MO
+Springfield,IL
+Auburn–Opelika,AL
+St. Cloud,MN
+Warner Robins,GA
+Charleston,WV
+Florence,SC
+Houma–Bayou Cane–Thibodaux,LA
+Racine–Mount Pleasant,WI
+Bowling Green,KY
+Dover,DE
+Billings,MT
+Midland,TX
+Coeur d'Alene,ID
+Saginaw,MI
+Yuba City,CA
+Abilene,TX
+Jackson,TN
+Burlington,NC
+Kingston,NY
+Iowa City,IA
+Blacksburg–Christiansburg–Radford,VA
+El Centro,CA
+Redding,CA
+Greenville,NC
+Muskegon–Norton Shores,MI
+Eau Claire,WI
+Oshkosh–Neenah,WI
+Sebastian–Vero Beach–West Vero Corridor,FL
+Bloomington,IL
+Idaho Falls,ID
+La Crosse–Onalaska,WI
+Homosassa Springs,FL
+Waterloo–Cedar Falls,IA
+Odessa,TX
+Pueblo,CO
+Terre Haute,IN
+Kenosha,WI
+Janesville–Beloit,WI
+Amherst Town–Northampton,MA
+Kahului–Wailuku,HI
+Bloomington,IN
+Grand Junction,CO
+Logan,UT
+Jackson,MI
+State College,PA
+Decatur,AL
+Chambersburg,PA
+Santa Fe,NM
+Bangor,ME
+Traverse City,MI
+Hattiesburg,MS
+Florence–Muscle Shoals,AL
+Rapid City,SD
+Monroe,MI
+Vineland,NJ
+Hanford–Corcoran,CA
+Dothan,AL
+Wildwood–The Villages,FL
+Niles,MI
+Valdosta,GA
+Jefferson City,MO
+Sherman–Denison,TX
+Wichita Falls,TX
+Winchester,VA
+Alexandria,LA
+Rocky Mount,NC
+Dalton,GA
+Sioux City,IA
+Texarkana,TX
+Albany,GA
+Lebanon,PA
+Flagstaff,AZ
+Morgantown,WV
+Hammond,LA
+Bismarck,ND
+Wausau,WI
+Harrisonburg,VA
+Jonesboro,AR
+Wheeling,WV
+Springfield,OH
+Manhattan,KS
+Battle Creek,MI
+Mount Vernon–Anacortes,WA
+Napa,CA
+Albany,OR
+Cleveland,TN
+Salisbury,MD
+Johnstown,PA
+Ames,IA
+Pittsfield,MA
+Staunton–Stuarts Draft,VA
+Elizabethtown,KY
+Missoula,MT
+Wenatchee–East Wenatchee,WA
+Bozeman,MT
+Morristown,TN
+Lawton,OK
+Sierra Vista–Douglas,AZ
+Glens Falls,NY
+Mansfield,OH
+Twin Falls,ID
+Lawrence,KS
+San Angelo,TX
+Farmington,NM
+Goldsboro,NC
+Altoona,PA
+St. Joseph,MO
+Sheboygan,WI
+Brunswick–St. Simons,GA
+Anniston–Oxford,AL
+Lewiston–Auburn,ME
+Longview–Kelso,WA
+Owensboro,KY
+Sandusky,OH
+Weirton–Steubenville,WV
+Williamsport,PA
+Watertown–Fort Drum,NY
+Muncie,IN
+Michigan City–La Porte,IN
+Beckley,WV
+Sebring,FL
+Pinehurst–Southern Pines,NC
+Gettysburg,PA
+Kankakee,IL
+Ithaca,NY
+Mankato,MN
+Sumter,SC
+Fond du Lac,WI
+Grand Forks,ND
+Gadsden,AL
+Bay City,MI
+Paducah,KY
+Cheyenne,WY
+Rome,GA
+Lima,OH
+Decatur,IL
+Hot Springs,AR
+Dubuque,IA
+Victoria,TX
+Corvallis,OR
+Cape Girardeau,MO
+Helena,MT
+Fairbanks–College,AK
+Pocatello,ID
+Hinesville,GA
+Grants Pass,OR
+Parkersburg–Vienna,WV
+Columbus,IN
+Great Falls,MT
+Kokomo,IN
+Midland,MI
+Elmira,NY
+Casper,WY
+Grand Island,NE
+Minot,ND
+Lewiston,ID
+Walla Walla,WA
+Enid,OK
+Eagle Pass,TX
+Carson City,NV

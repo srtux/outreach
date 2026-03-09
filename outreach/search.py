@@ -49,7 +49,7 @@ async def _run_agent_once(
         app_name=runner.app_name, user_id="user"
     )
 
-    prompt_text = f"Find school contacts in {city}, {state}."
+    prompt_text = f"Find the top school contacts in the metropolitan area and surrounding suburbs of {city}, {state}."
     if existing_counts:
         prompt_text += "\n\nAlready researched schools for this area:\n"
         schools_list = list(existing_counts.items())

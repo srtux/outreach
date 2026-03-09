@@ -209,10 +209,27 @@ async def main() -> None:
     await students_repo.shutdown()
     await volunteers_repo.shutdown()
 
+    # Calculate final statistics
+    final_students = students_repo.get_completed_cities()
+    final_volunteers = volunteers_repo.get_completed_cities()
+
+    def get_stats(data: dict[str, dict[str, int]]) -> tuple[int, int, int]:
+        cities = len(data)
+        schools = sum(len(schools_dict) for schools_dict in data.values())
+        contacts = sum(sum(schools_dict.values()) for schools_dict in data.values())
+        return cities, schools, contacts
+
+    s_cities, s_schools, s_contacts = get_stats(final_students)
+    v_cities, v_schools, v_contacts = get_stats(final_volunteers)
+
     overall_elapsed = time.monotonic() - overall_start
 
     print(f"\n" + "━"*70)
     print(f"🎉 All {len(pending)} regions processed in {overall_elapsed:.1f}s!".center(70))
+    print(f"━"*70)
+    print(f"📈 FINAL STATISTICS:")
+    print(f"  🧑‍🎓 Students   — {s_contacts:>4} contacts | {s_schools:>4} schools | {s_cities:>3} cities")
+    print(f"  🤝 Volunteers — {v_contacts:>4} contacts | {v_schools:>4} schools | {v_cities:>3} cities")
     print(f"━"*70 + "\n")
 
 

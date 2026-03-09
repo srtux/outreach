@@ -6,7 +6,7 @@ This guide walks you through the core logic of the application, focusing on `out
 
 At a high level, the `main()` function is the boss. It tells everyone what to do:
 1. Validates that you have a `regions.csv` file and a Google API Key.
-2. Checks the `output.csv` files to see what cities you've already finished, so it can skip them and save time.
+2. Checks the `students.csv` and `volunteers.csv` files to see what cities you've already finished, so it can skip them and save time.
 3. Groups all the remaining cities together and uses `asyncio.gather` to launch them all at the exact same time (remember the Chef kitchen analogy from Chapter 2).
 
 ### Trapping Sneaky Errors

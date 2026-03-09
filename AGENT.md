@@ -26,7 +26,7 @@ Each agent is a `google.adk.agents.LlmAgent` configured with:
 - **Model**: `gemini-3-flash-preview` (primary reasoning engine)
 - **System prompt**: Detailed instructions for the research task, target count, JSON schema, and anti-hallucination rules
 - **Tools**:
-  - `GoogleSearchAgentTool` — a sub-agent wrapping `gemini-2.0-flash` for Google Search
+  - `GoogleSearchAgentTool` — a sub-agent wrapping the same `MODEL_ID` for Google Search
   - `load_web_page` — a Python function that fetches HTML via `requests` and parses it with BeautifulSoup
 
 #### 3. Execution Flow (`_run_agent_once()`)
@@ -79,7 +79,7 @@ regions.csv → read_regions() → main() loop
         → LLM produces JSON
       → parse_agent_response() → [SchoolContact, ...]
     → contact_to_row()
-  → append_output_csv() → students.csv / volunteers.csv
+  → CsvRepository.append_rows() → students.csv / volunteers.csv
 ```
 
 ### Data Models (`outreach/models.py`)
@@ -96,18 +96,22 @@ SchoolContact:
 
 ### Configuration
 
-All tunable parameters live in `outreach/main.py`:
+All tunable parameters live in `outreach/config.py`:
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `MODEL_ID` | `gemini-3-flash-preview` | Primary LLM for reasoning |
-| `STUDENTS_TARGET` | `10` | Contacts per city (elementary/middle) |
-| `VOLUNTEERS_TARGET` | `12` | Contacts per city (high school) |
+| `MIN_SCHOOLS_TARGET` | `3` | Minimum unique schools per city to consider complete |
+| `MIN_CONTACTS_TARGET` | `20` | Minimum total contacts per city to consider complete |
+| `STUDENTS_TARGET` | `20` | Contacts per city (elementary/middle) |
+| `VOLUNTEERS_TARGET` | `20` | Contacts per city (high school) |
+| `MAX_CONCURRENT_AGENTS` | `15` | Concurrent agent limit (semaphore) |
+| `AGENT_TIMEOUT` | `300` | Max seconds for a single agent run |
 | `MAX_RETRIES` | `5` | Max retry attempts on rate limit |
 | `RETRY_BASE_DELAY` | `15.0` | Base backoff delay in seconds |
 
 ### Concurrency Model
 
 - **Per-city**: Students and Volunteers agents run in parallel via `asyncio.gather()`
-- **Across cities**: Multiple cities are processed **concurrently** (up to `MAX_CONCURRENT_CITIES`)
+- **Across cities**: Multiple cities are processed **concurrently** (up to `MAX_CONCURRENT_AGENTS`)
 - **Sessions**: Each agent run creates a fresh `InMemorySession`

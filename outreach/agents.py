@@ -1,7 +1,13 @@
 import asyncio
+
 from google.adk.agents import LlmAgent
 from google.adk.tools.google_search_agent_tool import create_google_search_agent, GoogleSearchAgentTool
 from google.adk.tools.load_web_page import load_web_page as sync_load_web_page
+
+from outreach.models import SchoolSearchResult
+from outreach.prompts import STUDENTS_SYSTEM_PROMPT, VOLUNTEERS_SYSTEM_PROMPT
+from outreach.config import STUDENTS_TARGET, VOLUNTEERS_TARGET, MODEL_ID
+
 
 async def load_web_page(url: str) -> str:
     """Fetches the content in the url and returns the text in it.
@@ -19,10 +25,6 @@ async def load_web_page(url: str) -> str:
         )
     except Exception as e:
         return f"Error: Failed to load {url}. {e.__class__.__name__}"
-
-from outreach.models import SchoolSearchResult
-from outreach.prompts import STUDENTS_SYSTEM_PROMPT, VOLUNTEERS_SYSTEM_PROMPT
-from outreach.config import STUDENTS_TARGET, VOLUNTEERS_TARGET, MODEL_ID
 
 def build_agent(agent_type: str) -> LlmAgent:
     """

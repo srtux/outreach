@@ -1,5 +1,4 @@
 import asyncio
-from pathlib import Path
 
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService

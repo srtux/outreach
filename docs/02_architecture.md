@@ -7,7 +7,7 @@ Now that you know what an agent is, let's look at how this specific project is b
 To guarantee our AI never hallucinates fake emails, we restrict its behavior using two highly specific tools defined in `outreach/agents.py`.
 
 ### 1. `GoogleSearchAgentTool`
-Instead of just using a raw, basic search plugin, we actually use a "Sub-Agent". The ADK allows us to wrap a smaller, faster model (using the same `MODEL_ID` like `gemini-3-flash-preview`) into a tool specifically designed just to query Google Search and read the Search Engine Results Page.
+Instead of just using a raw, basic search plugin, we actually use a "Sub-Agent". The ADK allows us to wrap the same `MODEL_ID` (like `gemini-3-flash-preview`) into a tool specifically designed just to query Google Search and read the Search Engine Results Page.
 When our main agent needs to find a school, it asks this Sub-Agent to do the searching and return a reliable, exact URL.
 
 ### 2. `load_web_page` & Strict Timeouts

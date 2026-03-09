@@ -44,7 +44,7 @@ graph TD
         Main --> SA[Students LlmAgent<br/>Elementary/Middle]:::agent
         Main --> VA[Volunteers LlmAgent<br/>High Schools]:::agent
 
-        SA & VA --> SubSearch["🔍 GoogleSearchAgentTool<br/>(Gemini 2.0 Flash Sub-agent)"]:::tools
+        SA & VA --> SubSearch["🔍 GoogleSearchAgentTool<br/>(Gemini Sub-agent)"]:::tools
         SA & VA --> WebScraper["🌐 load_web_page<br/>(requests + BeautifulSoup)"]:::tools
     end
     
@@ -105,9 +105,13 @@ outreach/
 │   ├── prompts.py                         # LLM System Prompts
 │   └── config.py                          # Environment and global configuration
 ├── tests/                                 # Unit & Integration tests
-│   ├── test_main.py                       
-│   └── test_models.py                     
-├── .env                                   # API Keys & local configuration
+│   ├── test_agents.py                     # Agent construction tests
+│   ├── test_io.py                         # CSV I/O and queue tests
+│   ├── test_main.py                       # Orchestration tests
+│   ├── test_models.py                     # Pydantic validation tests
+│   └── test_search.py                     # Agent execution, parsing, retry tests
+├── docs/                                  # Learner's guide
+├── .env.example                           # Environment variable template
 └── pyproject.toml                         # Dependency specifications
 ```
 
@@ -181,7 +185,7 @@ Behavior parameters can be tuned directly via `.env` files or system environment
 | `STUDENTS_TARGET` | `MIN_CONTACTS_TARGET` | Text injected into the elementary prompt for behavioral guidance. |
 | `VOLUNTEERS_TARGET` | `MIN_CONTACTS_TARGET` | Text injected into the high school prompt for behavioral guidance. |
 
-Hardcoded resilience parameters inside `outreach/main.py`:
+Hardcoded resilience parameters inside `outreach/config.py`:
 
 | Parameter | Default | Purpose |
 |----------|---------|-------------|

@@ -69,9 +69,9 @@ graph TD
 
 The agent is designed for reliably building a large database over multiple sessions. If you terminate the script mid-run:
 
-1. **State Persistence**: All found contacts are appended to `data/students.csv` and `data/volunteers.csv` immediately upon discovery.
-2. **Automatic Resumption**: On restart, the agent scans these files to determine exactly which schools in which cities still need research.
-3. **Smart Skip**: It will skip cities that have already reached their research targets and will focus on finding *new* schools in partially completed regions.
+1. **State Persistence**: All found contacts are securely saved via a robust locking mechanism and appended to `data/students.csv` and `data/volunteers.csv` **immediately** upon emergence during the live stream. No data is lost in the event of rate-limit timeouts, network failures, or manual cancellation.
+2. **Automatic Resumption**: On restart, the agent scans these files to assess progress. Progress is evaluated against both unique school counts (`MIN_SCHOOLS_TARGET`) and total contacts (`MIN_CONTACTS_TARGET`).
+3. **Smart Skip**: It will skip cities that have already reached their research thresholds. If a city was partially interrupted, it will restart the city's agent but instruct it specifically to skip already-saved schools and focus on finding *new* leads to meet the remaining requirements.
 
 ---
 
@@ -170,8 +170,10 @@ Behavior parameters can be tuned directly via `.env` files or system environment
 |----------|---------|-------------|
 | `MODEL_ID` | `gemini-3-flash-preview` | The primary reasoning engine for analysis |
 | `MAX_CONCURRENT_CITIES` | `15` | The number of cities executed simultaneously. Controls rate limiting. |
-| `STUDENTS_TARGET` | `20` | The required yield for elementary/middle schools |
-| `VOLUNTEERS_TARGET` | `20` | The required yield for high school contacts |
+| `MIN_SCHOOLS_TARGET` | `3` | The minimum required unique schools per city. |
+| `MIN_CONTACTS_TARGET` | `20` | The required total aggregate yield of contacts for the city. |
+| `STUDENTS_TARGET` | `MIN_CONTACTS_TARGET` | Text injected into the elementary prompt for behavioral guidance. |
+| `VOLUNTEERS_TARGET` | `MIN_CONTACTS_TARGET` | Text injected into the high school prompt for behavioral guidance. |
 
 Hardcoded resilience parameters inside `outreach/main.py`:
 

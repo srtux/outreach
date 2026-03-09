@@ -7,7 +7,7 @@ This guide walks you through `outreach/main.py`, focusing on the core logic: the
 At a high level, the `main()` function:
 1. Validates prerequisites (CSV exists, API Key exists).
 2. Reads the target cities from `data/regions.csv`.
-3. Checks output files (`students.csv`, `volunteers.csv`) to skip cities we've already researched.
+3. Checks output files to evaluate previous progress against minimum thresholds (`MIN_SCHOOLS_TARGET`, `MIN_CONTACTS_TARGET`). If the city satisfies both, it skips it.
 4. Uses `asyncio.gather` to launch tasks for all pending cities concurrently, gated by a `Semaphore` so we don't overwhelm Google.
 
 ## How the ADK `Runner` Works (`_run_agent_once`)
@@ -47,7 +47,9 @@ sequenceDiagram
 
 Because the Runner yields events back to our generator (`async for event in runner.run_async(...)`), we can intercept `FunctionCalls` to log them nicely in the terminal, giving us a live dashboard showing *exactly* what website the agent is scraping at any given second. 
 
-When the agent finally figures out the answer and writes its JSON object, it sends that back as `Text Output`, and we append it all into an `collected_text` string block.
+As the agent gathers information, it streams back `Text Output` representing the JSON structured array. Crucially, we parse this `collected_text` **on every single iteration of the loop**. 
+
+By running `json-repair` on the partial text array, we can detect the exact moment a new `SchoolContact` object becomes fully formed. Once detected, we immediately wrap the append operation in a `csv_lock` and write the new contact straight to the output dataset. This **Progressive Streaming** guarantees no data loss in the event of an interruption.
 
 ## Structured Output via `output_schema`
 

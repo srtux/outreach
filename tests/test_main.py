@@ -2,7 +2,15 @@ import pytest
 import json
 import csv
 from pathlib import Path
-from src.main import parse_agent_response, contact_to_row, read_regions, build_agent, STUDENTS_TARGET, VOLUNTEERS_TARGET
+from src.main import (
+    parse_agent_response,
+    contact_to_row,
+    read_regions,
+    build_agent,
+    _read_completed_cities,
+    STUDENTS_TARGET,
+    VOLUNTEERS_TARGET,
+)
 from src.models import SchoolContact
 from google.adk.agents import LlmAgent
 
@@ -18,10 +26,24 @@ def test_parse_agent_response_with_markdown():
     assert len(results) == 1
     assert results[0].school_name == "S1"
 
+def test_parse_agent_response_bare_list():
+    text = json.dumps([{"school_name": "S1", "faculty_name": "F1"}])
+    results = parse_agent_response(text)
+    assert len(results) == 1
+    assert results[0].school_name == "S1"
+
 def test_parse_agent_response_invalid_json():
     text = "Not a JSON"
     results = parse_agent_response(text)
     assert results == []
+
+def test_parse_agent_response_skips_malformed_contacts():
+    text = json.dumps({"contacts": [
+        {"school_name": "S1", "faculty_name": "F1"},
+        {"bad_field": "missing required"},
+    ]})
+    results = parse_agent_response(text)
+    assert len(results) == 1
 
 def test_contact_to_row():
     contact = SchoolContact(school_name="S1", faculty_name="F1", email="e1")
@@ -34,11 +56,25 @@ def test_read_regions(tmp_path):
     csv_file = tmp_path / "regions.csv"
     content = "City,State\nAustin,TX\nDallas,TX"
     csv_file.write_text(content)
-    
+
     regions = read_regions(csv_file)
     assert len(regions) == 2
     assert regions[0]["City"] == "Austin"
     assert regions[1]["State"] == "TX"
+
+def test_read_completed_cities(tmp_path):
+    csv_file = tmp_path / "output.csv"
+    csv_file.write_text("City/State,School Name,School Link,Faculty Name,Email,Dear Line,Comments\n"
+                        "\"Austin, TX\",School A,,John,,, \n"
+                        "\"Dallas, TX\",School B,,Jane,,, \n")
+    seen = _read_completed_cities(csv_file)
+    assert "Austin|TX" in seen
+    assert "Dallas|TX" in seen
+    assert len(seen) == 2
+
+def test_read_completed_cities_missing_file(tmp_path):
+    seen = _read_completed_cities(tmp_path / "nonexistent.csv")
+    assert seen == set()
 
 def test_build_agent_students():
     agent = build_agent("students")

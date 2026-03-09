@@ -8,6 +8,7 @@ import csv
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -44,6 +45,10 @@ VOLUNTEERS_TARGET = 12  # high school CS contacts per city
 # Retry settings for 429 rate-limit errors
 MAX_RETRIES = 5
 RETRY_BASE_DELAY = 15.0  # seconds; doubles each retry
+
+# Concurrency settings
+MAX_CONCURRENT_CITIES = 3  # number of cities to research in parallel
+AGENT_TIMEOUT = 300  # seconds; max time for a single agent run
 
 # Output CSV columns
 OUTPUT_COLUMNS = [
@@ -220,10 +225,10 @@ async def _run_agent_once(
 
     agent_icon = "🎓" if "student" in runner.agent.name else "🤝"
     agent_label = f"{agent_icon} {runner.agent.name.replace('_researcher', '').title():<10}"
-    
+
     collected_text = ""
     print(f"  {agent_label} | 🚀 Starting research...")
-    
+
     async for event in runner.run_async(
         user_id="user",
         session_id=session.id,
@@ -254,7 +259,9 @@ async def _run_agent_once(
             print(f"        👤 {c.faculty_name}  |  💼 {c.comments or 'No title'}")
             print(f"        📧 {c.email or 'No email found'}")
         print()
-            
+    else:
+        print(f"\n  {agent_label} | ⚠️ No contacts parsed for {city}, {state}")
+
     return contacts
 
 
@@ -263,22 +270,45 @@ async def search_city(
     city: str,
     state: str,
     session_service: InMemorySessionService,
+    semaphore: asyncio.Semaphore | None = None,
 ) -> list[SchoolContact]:
-    """Run the agent for a city with automatic retry on rate-limit errors."""
-    for attempt in range(MAX_RETRIES):
-        try:
-            return await _run_agent_once(runner, city, state, session_service)
-        except Exception as e:
-            err_str = str(e)
-            if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
-                delay = RETRY_BASE_DELAY * (2 ** attempt)
-                print(f"  [RATE LIMITED] Attempt {attempt + 1}/{MAX_RETRIES}. "
-                      f"Waiting {delay:.0f}s before retrying...")
-                await asyncio.sleep(delay)
-            else:
-                raise
-    # Final attempt — let it raise if it fails
-    return await _run_agent_once(runner, city, state, session_service)
+    """Run the agent for a city with automatic retry on rate-limit errors.
+
+    When a semaphore is provided, it limits how many cities run concurrently
+    to avoid overwhelming the API with too many parallel requests.
+    """
+    async def _inner() -> list[SchoolContact]:
+        for attempt in range(MAX_RETRIES):
+            try:
+                return await asyncio.wait_for(
+                    _run_agent_once(runner, city, state, session_service),
+                    timeout=AGENT_TIMEOUT,
+                )
+            except asyncio.TimeoutError:
+                print(f"  [TIMEOUT] Agent timed out for {city}, {state} "
+                      f"(attempt {attempt + 1}/{MAX_RETRIES})")
+                if attempt < MAX_RETRIES - 1:
+                    delay = RETRY_BASE_DELAY * (2 ** attempt)
+                    await asyncio.sleep(delay)
+            except Exception as e:
+                err_str = str(e)
+                if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                    delay = RETRY_BASE_DELAY * (2 ** attempt)
+                    print(f"  [RATE LIMITED] Attempt {attempt + 1}/{MAX_RETRIES}. "
+                          f"Waiting {delay:.0f}s before retrying...")
+                    await asyncio.sleep(delay)
+                else:
+                    raise
+        # Final attempt — let it raise if it fails
+        return await asyncio.wait_for(
+            _run_agent_once(runner, city, state, session_service),
+            timeout=AGENT_TIMEOUT,
+        )
+
+    if semaphore is not None:
+        async with semaphore:
+            return await _inner()
+    return await _inner()
 
 
 # ---------------------------------------------------------------------------
@@ -293,6 +323,26 @@ def read_regions(csv_path: Path) -> list[dict]:
         rows = list(reader)
     print(f"Loaded {len(rows)} region entries from {csv_path.name}")
     return rows
+
+
+def _read_completed_cities(*csv_paths: Path) -> set[str]:
+    """Read output CSVs and return set of 'City|State' keys already processed."""
+    seen: set[str] = set()
+    for path in csv_paths:
+        if not path.exists():
+            continue
+        try:
+            with open(path, "r", newline="", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    cs = row.get("City/State", "")
+                    if cs:
+                        parts = [p.strip() for p in cs.split(",", 1)]
+                        if len(parts) == 2:
+                            seen.add(f"{parts[0]}|{parts[1]}")
+        except Exception as e:
+            print(f"[WARN] Error reading {path.name}: {e}")
+    return seen
 
 
 def append_output_csv(
@@ -332,6 +382,66 @@ def contact_to_row(
 # Main
 # ---------------------------------------------------------------------------
 
+async def _process_city(
+    city: str,
+    state: str,
+    students_runner: Runner,
+    volunteers_runner: Runner,
+    session_service: InMemorySessionService,
+    semaphore: asyncio.Semaphore,
+    csv_lock: asyncio.Lock,
+    progress: dict,
+) -> None:
+    """Process a single city: run both agents, write results to CSV."""
+    idx = progress["done"] + 1
+    total = progress["total"]
+
+    print(f"\n" + "━"*70)
+    print(f" 📍 [{idx}/{total}] RESEARCHING: {city}, {state} ".center(70, "━"))
+    print(f"━"*70)
+    print(f"\n🎯 Target: {STUDENTS_TARGET} elementary/middle + {VOLUNTEERS_TARGET} high school CS contacts")
+    print(f"⚡ Running agents concurrently...\n")
+
+    start = time.monotonic()
+
+    results = await asyncio.gather(
+        search_city(students_runner, city, state, session_service, semaphore),
+        search_city(volunteers_runner, city, state, session_service, semaphore),
+        return_exceptions=True,
+    )
+
+    elapsed = time.monotonic() - start
+
+    student_rows: list[dict] = []
+    volunteer_rows: list[dict] = []
+
+    # Process Students
+    student_res = results[0]
+    if isinstance(student_res, Exception):
+        print(f"  ❌ [ERROR] Students search failed for {city}, {state}: {student_res}")
+    else:
+        for c in student_res:
+            student_rows.append(contact_to_row(c, city, state))
+
+    # Process Volunteers
+    volunteer_res = results[1]
+    if isinstance(volunteer_res, Exception):
+        print(f"  ❌ [ERROR] Volunteers search failed for {city}, {state}: {volunteer_res}")
+    else:
+        for c in volunteer_res:
+            volunteer_rows.append(contact_to_row(c, city, state))
+
+    # Serialize CSV writes to avoid interleaved output
+    async with csv_lock:
+        append_output_csv(OUTPUT_STUDENTS, student_rows)
+        append_output_csv(OUTPUT_VOLUNTEERS, volunteer_rows)
+
+    progress["done"] += 1
+    print(f"\n  ⏱️ {city}, {state} completed in {elapsed:.1f}s "
+          f"({len(student_rows)} students, {len(volunteer_rows)} volunteers) "
+          f"[{progress['done']}/{total} cities done]")
+
+
 async def main() -> None:
     if not REGIONS_CSV.exists():
         print(f"ERROR: Regions CSV not found at {REGIONS_CSV}")
@@ -364,27 +474,12 @@ async def main() -> None:
         session_service=session_service,
     )
 
-    # Deduplicate cities
-    seen_cities: set[str] = set()
+    # Deduplicate already-processed cities
+    seen_cities = _read_completed_cities(OUTPUT_STUDENTS, OUTPUT_VOLUNTEERS)
 
-    for path in [OUTPUT_STUDENTS, OUTPUT_VOLUNTEERS]:
-        if path.exists():
-            try:
-                with open(path, "r", newline="", encoding="utf-8") as f:
-                    reader = csv.DictReader(f)
-                    for row in reader:
-                        cs = row.get("City/State", "")
-                        if cs:
-                            parts = [p.strip() for p in cs.split(",", 1)]
-                            if len(parts) == 2:
-                                seen_cities.add(f"{parts[0]}|{parts[1]}")
-            except Exception as e:
-                print(f"[WARN] Error reading {path.name}: {e}")
-
+    # Filter to pending regions
+    pending: list[tuple[str, str]] = []
     for region in regions:
-        student_rows: list[dict] = []
-        volunteer_rows: list[dict] = []
-
         city = region.get("City", "").strip()
         state = region.get("State", "").strip()
 
@@ -397,43 +492,36 @@ async def main() -> None:
             print(f"[SKIP] Already processed {city}, {state}")
             continue
         seen_cities.add(city_key)
+        pending.append((city, state))
 
-        print(f"\n" + "━"*70)
-        print(f" 📍 RESEARCHING LOCATION: {city}, {state} ".center(70, "━"))
-        print(f"━"*70)
+    if not pending:
+        print("No new cities to process.")
+        return
 
-        # --- Concurrent Search ---
-        print(f"\n🎯 Target: {STUDENTS_TARGET} elementary/middle contacts and {VOLUNTEERS_TARGET} high school CS contacts")
-        print(f"⚡ Running agents concurrently...\n")
-        
-        results = await asyncio.gather(
-            search_city(students_runner, city, state, session_service),
-            search_city(volunteers_runner, city, state, session_service),
-            return_exceptions=True
+    print(f"\n📋 {len(pending)} cities to process (max {MAX_CONCURRENT_CITIES} concurrently)")
+
+    # Semaphore limits concurrent API calls; lock serializes CSV writes
+    semaphore = asyncio.Semaphore(MAX_CONCURRENT_CITIES)
+    csv_lock = asyncio.Lock()
+    progress = {"done": 0, "total": len(pending)}
+
+    overall_start = time.monotonic()
+
+    # Launch all cities concurrently — the semaphore gates actual execution
+    tasks = [
+        _process_city(
+            city, state,
+            students_runner, volunteers_runner,
+            session_service, semaphore, csv_lock, progress,
         )
+        for city, state in pending
+    ]
+    await asyncio.gather(*tasks, return_exceptions=True)
 
-        # Process Students
-        student_res = results[0]
-        if isinstance(student_res, Exception):
-            print(f"  ❌ [ERROR] Students search failed for {city}, {state}: {student_res}")
-        else:
-            for c in student_res:
-                student_rows.append(contact_to_row(c, city, state))
+    overall_elapsed = time.monotonic() - overall_start
 
-        # Process Volunteers
-        volunteer_res = results[1]
-        if isinstance(volunteer_res, Exception):
-            print(f"  ❌ [ERROR] Volunteers search failed for {city}, {state}: {volunteer_res}")
-        else:
-            for c in volunteer_res:
-                volunteer_rows.append(contact_to_row(c, city, state))
-
-        append_output_csv(OUTPUT_STUDENTS, student_rows)
-        append_output_csv(OUTPUT_VOLUNTEERS, volunteer_rows)
-
-    # Write outputs
     print(f"\n" + "━"*70)
-    print(f"🎉 All regions processed successfully!".center(70))
+    print(f"🎉 All {len(pending)} regions processed in {overall_elapsed:.1f}s!".center(70))
     print(f"━"*70 + "\n")
 
 

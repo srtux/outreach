@@ -1,6 +1,7 @@
 """Pydantic data models for school outreach contacts."""
 
-from pydantic import BaseModel, Field
+import re
+from pydantic import BaseModel, Field, field_validator
 
 
 class SchoolContact(BaseModel):
@@ -18,6 +19,16 @@ class SchoolContact(BaseModel):
         default="",
         description="Job title or other notes about this contact",
     )
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            return ""
+        if not re.match(r"(?i)^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$", v):
+            raise ValueError(f"Invalid email format: {v}")
+        return v
 
 
 class SchoolSearchResult(BaseModel):

@@ -1,7 +1,6 @@
 import asyncio
 
 from google.adk.agents import LlmAgent
-from google.adk.tools.google_search_agent_tool import create_google_search_agent, GoogleSearchAgentTool
 from google.adk.tools.load_web_page import load_web_page as sync_load_web_page
 
 from outreach.models import SchoolSearchResult
@@ -26,6 +25,7 @@ async def load_web_page(url: str) -> str:
     except Exception as e:
         return f"Error: Failed to load {url}. {e.__class__.__name__}"
 
+from google.adk.tools.google_search_tool import GoogleSearchTool
 def build_agent(agent_type: str) -> LlmAgent:
     """
     Create and configure an LlmAgent for specified research tasks.
@@ -42,15 +42,15 @@ def build_agent(agent_type: str) -> LlmAgent:
     else:
         instruction = VOLUNTEERS_SYSTEM_PROMPT.format(target=VOLUNTEERS_TARGET)
         name = "volunteers_researcher"
+    
+    model = "gemini-2.0-flash"
 
-    # search_agent is a lightweight agent specifically for finding search terms and processing SERP results
-    search_agent = create_google_search_agent("gemini-2.0-flash")
-    search_agent_tool = GoogleSearchAgentTool(agent=search_agent)
+    # Use the native google_search tool with bypass_multi_tools_limit=True
+    search_tool = GoogleSearchTool(bypass_multi_tools_limit=True)
 
     return LlmAgent(
         name=name,
-        model=MODEL_ID,
+        model=model,
         instruction=instruction,
-        tools=[search_agent_tool, load_web_page],
-        output_schema=SchoolSearchResult,
+        tools=[search_tool, load_web_page],
     )

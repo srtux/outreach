@@ -7,7 +7,7 @@ def test_build_agent_students():
     assert isinstance(agent, LlmAgent)
     assert agent.name == "students_researcher"
     tool_names = [tool.name if hasattr(tool, "name") else tool.__name__ for tool in agent.tools]
-    assert "google_search_agent" in tool_names
+    assert "google_search" in tool_names
     assert "load_web_page" in tool_names
 
 def test_build_agent_volunteers():
@@ -15,5 +15,5 @@ def test_build_agent_volunteers():
     assert isinstance(agent, LlmAgent)
     assert agent.name == "volunteers_researcher"
     tool_names = [tool.name if hasattr(tool, "name") else tool.__name__ for tool in agent.tools]
-    assert "google_search_agent" in tool_names
+    assert "google_search" in tool_names
     assert "load_web_page" in tool_names

@@ -21,6 +21,23 @@ class CsvRepository:
         self.path = path
         self._queue = asyncio.Queue()
         self._worker_task = asyncio.create_task(self._worker())
+        self._existing_keys = set()
+        self._load_existing_keys()
+
+    def _load_existing_keys(self):
+        if not self.path.exists():
+            return
+        try:
+            with open(self.path, "r", newline="", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    cs = row.get("City/State", "")
+                    school = row.get("School Name", "").strip()
+                    faculty = row.get("Faculty Name", "").strip()
+                    if cs and school and faculty:
+                        self._existing_keys.add((cs, school, faculty))
+        except Exception as e:
+            print(f"[WARN] Error reading {self.path.name} for deduplication: {e}")
 
     async def _worker(self):
         """Background task that continually processes the write queue."""
@@ -72,7 +89,20 @@ class CsvRepository:
         if not rows:
             return
             
-        await self._queue.put(rows)
+        unique_rows = []
+        for row in rows:
+            cs = row.get("City/State", "")
+            school_name = row.get("School Name", "").strip()
+            faculty_name = row.get("Faculty Name", "").strip()
+            key = (cs, school_name, faculty_name)
+            if key not in self._existing_keys:
+                unique_rows.append(row)
+                self._existing_keys.add(key)
+                
+        if not unique_rows:
+            return
+            
+        await self._queue.put(unique_rows)
         
     async def shutdown(self):
         """Signal the worker to flush all remaining items and stop."""

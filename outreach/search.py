@@ -172,4 +172,3 @@ async def search_city(
                     raise
             else:
                 raise
-    return []

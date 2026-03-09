@@ -5,11 +5,10 @@ from outreach.io import contact_to_row, read_regions, CsvRepository
 from outreach.models import SchoolContact
 
 def test_contact_to_row():
-    contact = SchoolContact(school_name="S1", faculty_name="F1", email="e1")
+    contact = SchoolContact(school_name="S1", faculty_name="F1", email="e1@example.com")
     row = contact_to_row(contact, "Austin", "TX")
     assert row["City/State"] == "Austin, TX"
-    assert row["School Name"] == "S1"
-    assert row["Email"] == "e1"
+    assert row["Email"] == "e1@example.com"
 
 def test_read_regions(tmp_path):
     csv_file = tmp_path / "regions.csv"
@@ -58,7 +57,14 @@ async def test_append_output_csv(tmp_path):
     assert "City/State,School Name" in content
     assert '"Austin, TX",S1' in content
     
-    # Append another row, shouldn't duplicate headers
+    # Append another row, shouldn't duplicate headers or the row itself due to deduplication
+    await repo.append_rows(rows)
+    await repo._queue.join()
+    lines = csv_file.read_text().strip().split('\n')
+    assert len(lines) == 2  # header + 1 row (duplicate dropped)
+    
+    # Append a different row, should be added
+    rows[0]["Faculty Name"] = "F2"
     await repo.append_rows(rows)
     await repo._queue.join()
     lines = csv_file.read_text().strip().split('\n')

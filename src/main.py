@@ -26,11 +26,13 @@ from google.genai import types
 if __name__ == "__main__" and not __package__:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.models import SchoolContact
+from src.models import SchoolContact, SchoolSearchResult
+from src.prompts import STUDENTS_SYSTEM_PROMPT, VOLUNTEERS_SYSTEM_PROMPT
 
 # ---------------------------------------------------------------------------
-# Configuration
+# GLOBAL CONFIGURATION
 # ---------------------------------------------------------------------------
+# File system paths
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 REGIONS_CSV = DATA_DIR / "regions.csv"
 OUTPUT_STUDENTS = DATA_DIR / "students.csv"
@@ -38,8 +40,8 @@ OUTPUT_VOLUNTEERS = DATA_DIR / "volunteers.csv"
 
 MODEL_ID = "gemini-3-flash-preview"
 
-STUDENTS_TARGET = 10  # elementary/middle school contacts per city
-VOLUNTEERS_TARGET = 12  # high school CS contacts per city
+STUDENTS_TARGET = 20  # elementary/middle school contacts per city
+VOLUNTEERS_TARGET = 20  # high school CS contacts per city
 
 
 # Retry settings for 429 rate-limit errors
@@ -62,76 +64,20 @@ OUTPUT_COLUMNS = [
 ]
 
 # ---------------------------------------------------------------------------
-# System prompts
+# AGENT BUILDERS
 # ---------------------------------------------------------------------------
-STUDENTS_SYSTEM_PROMPT = """\
-You are a research assistant that finds elementary and middle school contacts \
-for a coding camp outreach program.
 
-Given a city and state:
-1. Use the `google_search_agent` tool to find the top {target} elementary and middle schools in that area.
-2. For each school, find a faculty contact — preferably the Principal, Vice-Principal, STEM Coordinator, or Technology Teacher.
-3. CRITICAL: Do NOT guess or hallucinate email addresses. You MUST use the `load_web_page` tool to browse the school's or district's "Staff", "Directory", or "About Us" page.
-4. Extract their precise professional email address from the page text.
-
-Return your results as strictly valid JSON matching this schema:
-{{
-  "contacts": [
-    {{
-      "school_name": "string",
-      "school_link": "string (URL)",
-      "faculty_name": "string",
-      "email": "string",
-      "dear_line": "string (e.g. Dear Mr. Smith)",
-      "comments": "string (job title)"
-    }}
-  ]
-}}
-
-IMPORTANT RULES:
-- Return ONLY the raw JSON object. No markdown, no code fences, no commentary.
-- If you use `load_web_page` and cannot find an email, leave the field as an empty string. Never make up an email address.
-- Always include the school website URL in school_link if available.
-- Target exactly {target} contacts.
-"""
-
-VOLUNTEERS_SYSTEM_PROMPT = """\
-You are a research assistant that finds high school Computer Science teacher \
-contacts for a coding camp volunteer recruitment program.
-
-Given a city and state:
-1. Use the `google_search_agent` tool to find the top {target} high schools in that area.
-2. For each school, find a CS/Computer Science teacher, Robotics coach, Technology instructor, or CTE (Career and Technical Education) coordinator.
-3. CRITICAL: Do NOT guess or hallucinate email addresses. You MUST use the `load_web_page` tool to browse the school's or district's "Staff", "Directory", or "About Us" page.
-4. Extract their precise professional email address from the page text.
-
-Return your results as strictly valid JSON matching this schema:
-{{
-  "contacts": [
-    {{
-      "school_name": "string",
-      "school_link": "string (URL)",
-      "faculty_name": "string",
-      "email": "string",
-      "dear_line": "string (e.g. Dear Ms. Jones)",
-      "comments": "string (job title)"
-    }}
-  ]
-}}
-
-IMPORTANT RULES:
-- Return ONLY the raw JSON object. No markdown, no code fences, no commentary.
-- If you use `load_web_page` and cannot find an email, leave the field as an empty string. Never make up an email address.
-- Always include the school website URL in school_link if available.
-- Target exactly {target} contacts.
-"""
-
-# ---------------------------------------------------------------------------
-# Agent builders
-# ---------------------------------------------------------------------------
 
 def build_agent(agent_type: str) -> LlmAgent:
-    """Create an LlmAgent configured for either students or volunteers."""
+    """
+    Create and configure an LlmAgent for specified research tasks.
+
+    Args:
+        agent_type: Either 'students' or 'volunteers' to determine the instructions.
+
+    Returns:
+        A configured LlmAgent instance.
+    """
     if agent_type == "students":
         instruction = STUDENTS_SYSTEM_PROMPT.format(target=STUDENTS_TARGET)
         name = "students_researcher"
@@ -139,6 +85,7 @@ def build_agent(agent_type: str) -> LlmAgent:
         instruction = VOLUNTEERS_SYSTEM_PROMPT.format(target=VOLUNTEERS_TARGET)
         name = "volunteers_researcher"
 
+    # search_agent is a lightweight agent specifically for finding search terms and processing SERP results
     search_agent = create_google_search_agent("gemini-2.0-flash")
     search_agent_tool = GoogleSearchAgentTool(agent=search_agent)
 
@@ -147,64 +94,36 @@ def build_agent(agent_type: str) -> LlmAgent:
         model=MODEL_ID,
         instruction=instruction,
         tools=[search_agent_tool, load_web_page],
+        output_schema=SchoolSearchResult,
     )
 
 
 # ---------------------------------------------------------------------------
-# Core search logic
+# CORE SEARCH AND RESPONSE PARSING
 # ---------------------------------------------------------------------------
 
+
 def parse_agent_response(text: str) -> list[SchoolContact]:
-    """Parse the agent's JSON response into a list of SchoolContact."""
-    import re
-    # 1. Try to extract from markdown fences
-    match = re.search(r"```(?:json)?\s*(.*?)\s*```", text, re.DOTALL)
-    if match:
-        cleaned = match.group(1).strip()
-    else:
-        # 2. Try to find the first '{' and last '}' (for dict)
-        start_dict = text.find('{')
-        end_dict = text.rfind('}')
-        # 3. Try to find the first '[' and last ']' (for list)
-        start_list = text.find('[')
-        end_list = text.rfind(']')
-
-        # Determine which one appears first and is larger
-        if start_dict != -1 and (start_list == -1 or start_dict < start_list):
-            cleaned = text[start_dict : end_dict + 1]
-        elif start_list != -1:
-            cleaned = text[start_list : end_list + 1]
-        else:
-            cleaned = text.strip()
-
-    if not cleaned:
-        return []
-
+    """Robustly extract and parse contact information from the agent's response using json-repair."""
+    import json_repair
+    
     try:
-        data = json.loads(cleaned)
-    except json.JSONDecodeError:
-        print(f"  [WARN] Could not parse JSON from agent response. Skipping.")
-        # Logging first 100 chars for debugging
-        snippet = (text[:100] + '...') if len(text) > 100 else text
-        print(f"  [DEBUG] Response snippet: {repr(snippet)}")
-        return []
-
-    # Handle both {"contacts": [...]} and bare [...]
-    if isinstance(data, list):
-        contacts_raw = data
-    elif isinstance(data, dict) and "contacts" in data:
-        contacts_raw = data["contacts"]
-    else:
-        print(f"  [WARN] Unexpected JSON structure. Skipping.")
-        return []
-
-    contacts = []
-    for item in contacts_raw:
+        data = json_repair.loads(text)
+        # 1. Try bulk validation first (fastest)
         try:
-            contacts.append(SchoolContact(**item))
-        except Exception as e:
-            print(f"  [WARN] Skipping malformed contact: {e}")
-    return contacts
+            return SchoolSearchResult.model_validate(data).contacts
+        except Exception:
+            # 2. Fallback: Parse individually to be resilient to single bad items
+            raw = data.get("contacts", data) if isinstance(data, dict) else data
+            if not isinstance(raw, list): return []
+            
+            contacts = []
+            for item in raw:
+                try: contacts.append(SchoolContact.model_validate(item))
+                except Exception: continue
+            return contacts
+    except Exception:
+        return []
 
 
 async def _run_agent_once(
@@ -212,15 +131,25 @@ async def _run_agent_once(
     city: str,
     state: str,
     session_service: InMemorySessionService,
+    existing_counts: dict[str, int] | None = None,
 ) -> list[SchoolContact]:
     """Single attempt to run the agent for a city."""
     session = await session_service.create_session(
         app_name=runner.app_name, user_id="user"
     )
 
+    prompt_text = f"Find school contacts in {city}, {state}."
+    if existing_counts:
+        prompt_text += "\n\nAlready researched schools for this area:\n"
+        for school, count in existing_counts.items():
+            prompt_text += f"- {school}: {count} contacts found\n"
+        prompt_text += "\nSkip schools that already have 2 or more contacts."
+        prompt_text += " Retry schools with 0 or 1 contacts to try to find more."
+        prompt_text += " Focus your search on finding NEW schools not listed above."
+
     user_msg = types.Content(
         role="user",
-        parts=[types.Part(text=f"Find school contacts in {city}, {state}.")],
+        parts=[types.Part(text=prompt_text)],
     )
 
     agent_icon = "🎓" if "student" in runner.agent.name else "🤝"
@@ -270,6 +199,7 @@ async def search_city(
     city: str,
     state: str,
     session_service: InMemorySessionService,
+    existing_counts: dict[str, int] | None = None,
     semaphore: asyncio.Semaphore | None = None,
 ) -> list[SchoolContact]:
     """Run the agent for a city with automatic retry on rate-limit errors.
@@ -281,7 +211,7 @@ async def search_city(
         for attempt in range(MAX_RETRIES):
             try:
                 return await asyncio.wait_for(
-                    _run_agent_once(runner, city, state, session_service),
+                    _run_agent_once(runner, city, state, session_service, existing_counts),
                     timeout=AGENT_TIMEOUT,
                 )
             except asyncio.TimeoutError:
@@ -290,20 +220,21 @@ async def search_city(
                 if attempt < MAX_RETRIES - 1:
                     delay = RETRY_BASE_DELAY * (2 ** attempt)
                     await asyncio.sleep(delay)
+                else:
+                    return []
             except Exception as e:
                 err_str = str(e)
                 if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
-                    delay = RETRY_BASE_DELAY * (2 ** attempt)
-                    print(f"  [RATE LIMITED] Attempt {attempt + 1}/{MAX_RETRIES}. "
-                          f"Waiting {delay:.0f}s before retrying...")
-                    await asyncio.sleep(delay)
+                    if attempt < MAX_RETRIES - 1:
+                        delay = RETRY_BASE_DELAY * (2 ** attempt)
+                        print(f"  [RATE LIMITED] Attempt {attempt + 1}/{MAX_RETRIES}. "
+                              f"Waiting {delay:.0f}s before retrying...")
+                        await asyncio.sleep(delay)
+                    else:
+                        raise
                 else:
                     raise
-        # Final attempt — let it raise if it fails
-        return await asyncio.wait_for(
-            _run_agent_once(runner, city, state, session_service),
-            timeout=AGENT_TIMEOUT,
-        )
+        return []
 
     if semaphore is not None:
         async with semaphore:
@@ -312,7 +243,7 @@ async def search_city(
 
 
 # ---------------------------------------------------------------------------
-# CSV I/O
+# DATASET I/O (CSV)
 # ---------------------------------------------------------------------------
 
 def read_regions(csv_path: Path) -> list[dict]:
@@ -325,24 +256,29 @@ def read_regions(csv_path: Path) -> list[dict]:
     return rows
 
 
-def _read_completed_cities(*csv_paths: Path) -> set[str]:
-    """Read output CSVs and return set of 'City|State' keys already processed."""
-    seen: set[str] = set()
-    for path in csv_paths:
-        if not path.exists():
-            continue
-        try:
-            with open(path, "r", newline="", encoding="utf-8") as f:
-                reader = csv.DictReader(f)
-                for row in reader:
-                    cs = row.get("City/State", "")
-                    if cs:
-                        parts = [p.strip() for p in cs.split(",", 1)]
-                        if len(parts) == 2:
-                            seen.add(f"{parts[0]}|{parts[1]}")
-        except Exception as e:
-            print(f"[WARN] Error reading {path.name}: {e}")
-    return seen
+from collections import defaultdict
+
+def _read_completed_cities(csv_path: Path) -> dict[str, dict[str, int]]:
+    """Read an output CSV and return a mapping of 'City|State' -> 'School Name' -> count of contacts."""
+    seen: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    if not csv_path.exists():
+        return {}
+    
+    try:
+        with open(csv_path, "r", newline="", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                cs = row.get("City/State", "")
+                school_name = row.get("School Name", "").strip()
+                if cs and school_name:
+                    parts = [p.strip() for p in cs.split(",", 1)]
+                    if len(parts) == 2:
+                        city_key = f"{parts[0]}|{parts[1]}"
+                        seen[city_key][school_name] += 1
+    except Exception as e:
+        print(f"[WARN] Error reading {csv_path.name}: {e}")
+        
+    return {k: dict(v) for k, v in seen.items()}
 
 
 def append_output_csv(
@@ -379,7 +315,7 @@ def contact_to_row(
 
 
 # ---------------------------------------------------------------------------
-# Main
+# ASYNC WORKFLOW EXECUTION
 # ---------------------------------------------------------------------------
 
 async def _process_city(
@@ -391,6 +327,8 @@ async def _process_city(
     semaphore: asyncio.Semaphore,
     csv_lock: asyncio.Lock,
     progress: dict,
+    student_counts: dict[str, int],
+    volunteer_counts: dict[str, int],
 ) -> None:
     """Process a single city: run both agents, write results to CSV."""
     idx = progress["done"] + 1
@@ -405,8 +343,8 @@ async def _process_city(
     start = time.monotonic()
 
     results = await asyncio.gather(
-        search_city(students_runner, city, state, session_service, semaphore),
-        search_city(volunteers_runner, city, state, session_service, semaphore),
+        search_city(students_runner, city, state, session_service, student_counts, semaphore),
+        search_city(volunteers_runner, city, state, session_service, volunteer_counts, semaphore),
         return_exceptions=True,
     )
 
@@ -443,6 +381,15 @@ async def _process_city(
 
 
 async def main() -> None:
+    """
+    Orchestrates the research process for all regions.
+
+    Workflow:
+    1. Loads region data from CSV.
+    2. Initializes LLM runners for student and volunteer research.
+    3. Filters out already-processed cities based on output files.
+    4. Concurrently processes pending cities using a semaphore to manage API load.
+    """
     if not REGIONS_CSV.exists():
         print(f"ERROR: Regions CSV not found at {REGIONS_CSV}")
         sys.exit(1)
@@ -474,11 +421,12 @@ async def main() -> None:
         session_service=session_service,
     )
 
-    # Deduplicate already-processed cities
-    seen_cities = _read_completed_cities(OUTPUT_STUDENTS, OUTPUT_VOLUNTEERS)
+    # Deduplicate already-processed cities to allow resumption after failure
+    seen_students = _read_completed_cities(OUTPUT_STUDENTS)
+    seen_volunteers = _read_completed_cities(OUTPUT_VOLUNTEERS)
 
     # Filter to pending regions
-    pending: list[tuple[str, str]] = []
+    pending: list[tuple[str, str, dict[str, int], dict[str, int]]] = []
     for region in regions:
         city = region.get("City", "").strip()
         state = region.get("State", "").strip()
@@ -488,11 +436,15 @@ async def main() -> None:
             continue
 
         city_key = f"{city}|{state}"
-        if city_key in seen_cities:
-            print(f"[SKIP] Already processed {city}, {state}")
+        student_counts = seen_students.get(city_key, {})
+        volunteer_counts = seen_volunteers.get(city_key, {})
+        
+        # Skip city entirely if we've already found enough schools
+        if len(student_counts) >= STUDENTS_TARGET and len(volunteer_counts) >= VOLUNTEERS_TARGET:
+            print(f"[SKIP] {city}, {state} already has enough schools ({len(student_counts)} students, {len(volunteer_counts)} volunteers).")
             continue
-        seen_cities.add(city_key)
-        pending.append((city, state))
+            
+        pending.append((city, state, student_counts, volunteer_counts))
 
     if not pending:
         print("No new cities to process.")
@@ -500,7 +452,8 @@ async def main() -> None:
 
     print(f"\n📋 {len(pending)} cities to process (max {MAX_CONCURRENT_CITIES} concurrently)")
 
-    # Semaphore limits concurrent API calls; lock serializes CSV writes
+    # Semaphore limits concurrent API calls to prevent 429 errors from Google Gemini
+    # csv_lock ensures multiple workers don't corrupt output files
     semaphore = asyncio.Semaphore(MAX_CONCURRENT_CITIES)
     csv_lock = asyncio.Lock()
     progress = {"done": 0, "total": len(pending)}
@@ -513,8 +466,9 @@ async def main() -> None:
             city, state,
             students_runner, volunteers_runner,
             session_service, semaphore, csv_lock, progress,
+            student_counts, volunteer_counts,
         )
-        for city, state in pending
+        for city, state, student_counts, volunteer_counts in pending
     ]
     await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -526,4 +480,8 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\n\n🛑 Process interrupted by user. Exiting gracefully...")
+        sys.exit(0)

@@ -5,6 +5,7 @@ requires-python = ">=3.11"
 dependencies = [
     "beautifulsoup4>=4.14.3",
     "google-adk",
+    "json-repair",
     "lxml>=6.0.2",
     "pydantic",
     "python-dotenv",
@@ -14,4 +15,7 @@ dependencies = [
 [dependency-groups]
 dev = [
     "pytest>=9.0.2",
+    "pytest-asyncio",
+    "pytest-cov",
+    "pytest-mock",
 ]

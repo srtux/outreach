@@ -18,8 +18,8 @@ By providing a list of target cities, the tool dispatches concurrent AI research
 
 | Agent | Target Audience | Target Roles | Yield per City |
 |-------|---------------|-------------|----------------|
-| **Students** | Elementary & Middle Schools | Principal, Vice-Principal, STEM Coordinator | 10 contacts |
-| **Volunteers** | High Schools | CS Teacher, Robotics Coach, CTE Coordinator | 12 contacts |
+| **Students** | Elementary & Middle Schools | Principal, Vice-Principal, STEM Coordinator | Up to 20 contacts |
+| **Volunteers** | High Schools | CS Teacher, Robotics Coach, CTE Coordinator | Up to 20 contacts |
 
 ---
 
@@ -58,8 +58,20 @@ graph TD
 
 - **Massive Concurrency**: Processes multiple data streams asynchronously via `asyncio.gather`. The orchestrator runs the Students and Volunteers agents simultaneously on a per-region basis.
 - **Sub-Agent Pattern**: Bypasses typical LLM API constraints by wrapping the built-in Gemini Search capability inside a dedicated `GoogleSearchAgentTool` sub-agent, permitting it to coexist seamlessly with custom Python function calling.
-- **Strict Data Contracts**: Relies on Pydantic `BaseModel` schemas for flawless, strongly-typed JSON outputs.
-- **Resilient Execution**: Employs exponential backoff out-of-the-box via the ADK `Runner` to gracefully handle API rate limits (`429`) or quota ceilings.
+- **Strict Data Contracts**: Relies on `json-repair` and Pydantic `BaseModel` schemas for flawless, strongly-typed JSON outputs.
+- **Progressive Database Building**: Automatically reads existing CSV outputs to deduplicate schools across multiple runs. It intelligently skips already researched schools and retries schools with missing contacts to build a complete database over time.
+- **Resilient Execution**: Employs exponential backoff out-of-the-box to gracefully handle API rate limits (`429`) or quota ceilings.
+
+---
+
+## 📚 Learner's Guide
+
+Are you new to programming, AI agents, or testing? We've put together a comprehensive 4-part guide to help you understand exactly how this codebase works, from architecture to testing strategies.
+
+1. [**01: Introduction & The ADK**](./docs/01_introduction.md) - Learn what agents are and how the Google ADK powers them.
+2. [**02: Architecture and Concurrency**](./docs/02_architecture.md) - Understand the Dual-Tool anti-hallucination pattern and `asyncio` concurrency.
+3. [**03: Code Walkthrough**](./docs/03_code_walkthrough.md) - Dive into `main.py`, the ADK event stream, and rate-limit retry loops.
+4. [**04: Testing Guide**](./docs/04_testing_guide.md) - Learn how we achieve 94% test coverage using `pytest-asyncio` and `pytest-mock` without hitting real APIs.
 
 ---
 
@@ -145,8 +157,8 @@ Behavior parameters can be tuned directly in `src/main.py`.
 | Parameter | Default | Purpose |
 |----------|---------|-------------|
 | `MODEL_ID` | `gemini-3-flash-preview` | The primary reasoning engine for analysis |
-| `STUDENTS_TARGET` | `10` | The required yield for elementary/middle schools |
-| `VOLUNTEERS_TARGET` | `12` | The required yield for high school contacts |
+| `STUDENTS_TARGET` | `20` | The required yield for elementary/middle schools |
+| `VOLUNTEERS_TARGET` | `20` | The required yield for high school contacts |
 | `MAX_RETRIES` | `5` | API resilience retry bounds |
 | `RETRY_BASE_DELAY` | `15.0` | Initial exponential backoff in seconds |
 
